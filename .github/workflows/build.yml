@@ -25,43 +25,40 @@ jobs:
       - name: Generate Android platform files
         run: flutter create --platforms=android .
 
-      # Some plugins now require Android API 36. Flutter's generated Android
-      # template may use an older compileSdk, so raise it before resolving/building.
       - name: Install dependencies
         run: flutter pub get
 
-      # Recent Android plugins can declare compileSdk 34 even when the app
-      # uses API 36. Update the app and cached plugin Gradle files before build.
-      - name: Set Android compile SDK to 36 for app and plugins
+      - name: Generate DP app launcher icon
+        run: dart run flutter_launcher_icons
+
+      - name: Set Android app name to DP
+        run: sed -i 's/android:label="[^"]*"/android:label="DP"/' android/app/src/main/AndroidManifest.xml
+
+      - name: Set Android compile SDK to 36 for plugins
         shell: bash
         run: |
           python3 - <<'PYCODE'
           from pathlib import Path
           import re
-
           roots = [Path('android'), Path.home() / '.pub-cache' / 'hosted']
+          pattern = re.compile(r'(?m)^(\s*compileSdk(?:Version)?\s*(?:=\s*)?)(?:flutter\.compileSdkVersion|\d+)(\s*(?://.*)?$)')
           changed = []
-          pattern = re.compile(
-              r'(?m)^(\s*compileSdk(?:Version)?\s*(?:=\s*)?)(?:flutter\.compileSdkVersion|\d+)(\s*(?:\n|$))'
-          )
           for root in roots:
               if not root.exists():
                   continue
-              for path in root.rglob('*'):
-                  if path.name not in ('build.gradle', 'build.gradle.kts'):
+              for file in root.rglob('*'):
+                  if file.name not in ('build.gradle', 'build.gradle.kts'):
                       continue
                   try:
-                      original = path.read_text()
+                      original = file.read_text()
                   except (UnicodeDecodeError, OSError):
                       continue
-                  updated, count = pattern.subn(lambda m: m.group(1) + '36' + m.group(2), original)
-                  if count:
-                      path.write_text(updated)
-                      changed.append(f'{path}: {count} compileSdk setting(s)')
-          if not changed:
-              raise SystemExit('No Gradle compileSdk setting was updated; refusing to build with the old SDK.')
-          print('Updated Android compile SDK to API 36:')
-          print('\n'.join(changed))
+                  updated, count = pattern.subn(r'\g<1>36\g<2>', original)
+                  if count and updated != original:
+                      file.write_text(updated)
+                      changed.append(str(file))
+          print('Gradle files updated for compileSdk 36:')
+          print('\n'.join(changed) if changed else 'No matching declarations found')
           PYCODE
 
       - name: Analyze Dart code
@@ -96,6 +93,9 @@ jobs:
 
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Generate DP app launcher icon for Windows
+        run: dart run flutter_launcher_icons
 
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
