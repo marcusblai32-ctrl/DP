@@ -1,18 +1,18 @@
-DP SCOLAIRE - FICHIERS À REMPLACER / AJOUTER
+DP SCOLAIRE — CORRECTION DE L'ERREUR flutter analyze
 
-Ce ZIP contient uniquement les fichiers concernés par la correction :
+Ce ZIP contient uniquement les fichiers à remplacer :
 
-1. Remplacer pubspec.yaml à la racine du projet.
-2. Remplacer lib/main.dart.
-3. Ajouter/remplacer lib/database/database_helper.dart.
-4. Remplacer .github/workflows/build.yml.
+1. lib/main.dart
+   - Corrige la parenthèse manquante à la ligne de la liste des évaluations.
+   - Met à jour DropdownButtonFormField pour utiliser initialValue.
+   - Corrige les vérifications de BuildContext après des opérations asynchrones.
 
-Correction de l'erreur flutter_launcher_icons :
-Le workflow corrigé ne lance plus `dart run flutter_launcher_icons`, car cette commande n'est pas nécessaire pour construire l'APK ou la version Windows. Aucun package ni fichier d'icône n'est requis pour cette étape.
+2. lib/database/database_helper.dart
+   - Retire l'import sqflite redondant signalé par l'analyseur.
 
-Après avoir copié ces fichiers dans le projet en conservant exactement les chemins :
-- lancer `flutter pub get` localement si Flutter est installé ;
-- pousser les modifications sur GitHub ;
-- ouvrir l'onglet Actions et vérifier le résultat.
+3. test/widget_test.dart
+   - Remplace la référence obsolète à MyApp par SchoolApp, qui est le nom réel de l'application.
 
-ATTENTION : la compilation n'a pas été exécutée ici. Vérifier les logs GitHub Actions avant de considérer la correction validée.
+Copiez les fichiers en conservant exactement les chemins, puis poussez vers GitHub. Le workflow devrait alors passer l'analyse syntaxique. Les avertissements informatifs restants, s'il y en a, ne sont pas bloquants avec --no-fatal-infos --no-fatal-warnings.
+
+Important : Flutter n'est pas installé dans l'environnement de préparation, donc cette correction n'a pas été compilée ici. Vérifiez le prochain journal GitHub Actions.
