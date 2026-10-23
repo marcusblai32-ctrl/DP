@@ -23,7 +23,7 @@ class SchoolApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'DP Scolaire',
+      title: 'DP',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF174A8B)),
@@ -42,6 +42,8 @@ class SchoolHome extends StatefulWidget {
 
 class _SchoolHomeState extends State<SchoolHome> {
   int tab = 0;
+  bool navigationExpanded = false;
+  final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
   bool loading = true;
   List<String> levels = ['Niveau 1'];
   List<String> groups = ['Groupe A'];
@@ -648,7 +650,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     const SizedBox(height: 12),
     Expanded(child: assessments.isEmpty ? const Center(child: Text('Aucune évaluation.')) : ListView.builder(itemCount: assessments.length, itemBuilder: (_, i) {
       final a = assessments[i];
-      return Card(child: ListTile(title: Text(a.title), subtitle: Text('${a.category} · ${a.level} / ${a.group} · max ${a.maxScore}'), trailing: FilledButton(onPressed: () => _enterGrades(a), child: const Text('Saisir notes'))));
+      return Card(child: ListTile(title: Text(a.title), subtitle: Text('${a.category} · ${a.level} / ${a.group} · max ${a.maxScore}'), trailing: FilledButton(onPressed: () => _enterGrades(a), child: const Text('Saisir notes')));
     })),
   ]));
 
@@ -696,30 +698,95 @@ class _SchoolHomeState extends State<SchoolHome> {
     }),
   ]);
 
+  Widget _drawerItem(IconData icon, String label, int index) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(label),
+      selected: tab == index,
+      onTap: () {
+        setState(() => tab = index);
+        Navigator.of(context).pop();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final compactScreen = width < 760;
     return Scaffold(
-      appBar: AppBar(title: const Text('DP Scolaire'), actions: [
-        IconButton(tooltip: 'Importer une sauvegarde', onPressed: _importBackup, icon: const Icon(Icons.file_open)),
-        IconButton(tooltip: 'Exporter et partager une sauvegarde', onPressed: _exportBackup, icon: const Icon(Icons.share)),
-      ]),
-      body: Row(children: [
-        NavigationRail(
-          selectedIndex: tab, labelType: NavigationRailLabelType.all,
-          onDestinationSelected: (i) => setState(() => tab = i),
-          destinations: const [
-            NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Accueil')),
-            NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Élèves')),
-            NavigationRailDestination(icon: Icon(Icons.school_outlined), selectedIcon: Icon(Icons.school), label: Text('Niveaux')),
-            NavigationRailDestination(icon: Icon(Icons.fact_check_outlined), selectedIcon: Icon(Icons.fact_check), label: Text('Présences')),
-            NavigationRailDestination(icon: Icon(Icons.grade_outlined), selectedIcon: Icon(Icons.grade), label: Text('Notes')),
-            NavigationRailDestination(icon: Icon(Icons.quiz_outlined), selectedIcon: Icon(Icons.quiz), label: Text('Examens')),
-            NavigationRailDestination(icon: Icon(Icons.assessment_outlined), selectedIcon: Icon(Icons.assessment), label: Text('Rapports')),
-          ],
+      key: scaffoldKey,
+      appBar: AppBar(
+        title: const Text('DP'),
+        leading: IconButton(
+          tooltip: compactScreen
+              ? 'Ouvrir le menu'
+              : (navigationExpanded ? 'Réduire le menu' : 'Développer le menu'),
+          onPressed: () {
+            if (compactScreen) {
+              scaffoldKey.currentState?.openDrawer();
+            } else {
+              setState(() => navigationExpanded = !navigationExpanded);
+            }
+          },
+          icon: Icon(compactScreen
+              ? Icons.menu
+              : (navigationExpanded ? Icons.menu_open : Icons.menu)),
         ),
-        const VerticalDivider(width: 1),
-        Expanded(child: _page()),
-      ]),
+        actions: [
+          IconButton(tooltip: 'Importer une sauvegarde', onPressed: _importBackup, icon: const Icon(Icons.file_open)),
+          IconButton(tooltip: 'Exporter et partager une sauvegarde', onPressed: _exportBackup, icon: const Icon(Icons.share)),
+        ],
+      ),
+      drawer: compactScreen
+          ? Drawer(
+              child: SafeArea(
+                child: ListView(padding: EdgeInsets.zero, children: [
+                  const DrawerHeader(
+                    child: Align(
+                      alignment: Alignment.bottomLeft,
+                      child: Text('DP', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  ...ListTile.divideTiles(
+                    context: context,
+                    tiles: [
+                      _drawerItem(Icons.dashboard_outlined, 'Accueil', 0),
+                      _drawerItem(Icons.people_outline, 'Élèves', 1),
+                      _drawerItem(Icons.school_outlined, 'Niveaux et groupes', 2),
+                      _drawerItem(Icons.fact_check_outlined, 'Présences', 3),
+                      _drawerItem(Icons.grade_outlined, 'Évaluations et notes', 4),
+                      _drawerItem(Icons.quiz_outlined, 'Examens', 5),
+                      _drawerItem(Icons.assessment_outlined, 'Rapports', 6),
+                    ],
+                  ),
+                ]),
+              ),
+            )
+          : null,
+      body: compactScreen
+          ? SafeArea(child: _page())
+          : Row(children: [
+              NavigationRail(
+                extended: navigationExpanded,
+                minExtendedWidth: 200,
+                selectedIndex: tab,
+                labelType: navigationExpanded ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+                onDestinationSelected: (i) => setState(() => tab = i),
+                destinations: const [
+                  NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Accueil')),
+                  NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Élèves')),
+                  NavigationRailDestination(icon: Icon(Icons.school_outlined), selectedIcon: Icon(Icons.school), label: Text('Niveaux')),
+                  NavigationRailDestination(icon: Icon(Icons.fact_check_outlined), selectedIcon: Icon(Icons.fact_check), label: Text('Présences')),
+                  NavigationRailDestination(icon: Icon(Icons.grade_outlined), selectedIcon: Icon(Icons.grade), label: Text('Notes')),
+                  NavigationRailDestination(icon: Icon(Icons.quiz_outlined), selectedIcon: Icon(Icons.quiz), label: Text('Examens')),
+                  NavigationRailDestination(icon: Icon(Icons.assessment_outlined), selectedIcon: Icon(Icons.assessment), label: Text('Rapports')),
+                ],
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(child: _page()),
+            ]),
+      bottomNavigationBar: null,
     );
   }
 }
