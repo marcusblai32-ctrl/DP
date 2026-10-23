@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'database/database_helper.dart';
+import 'package:share_plus/share_plus.dart';
 import 'models/student.dart';
 import 'models/assessment.dart';
 import 'models/attendance_record.dart';
@@ -15,11 +15,7 @@ import 'models/grade_record.dart';
 import 'models/exam_question.dart';
 import 'services/grade_service.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await DatabaseHelper.instance.initialize();
-  runApp(const SchoolApp());
-}
+void main() => runApp(const SchoolApp());
 
 class SchoolApp extends StatelessWidget {
   const SchoolApp({super.key});
@@ -73,65 +69,34 @@ class _SchoolHomeState extends State<SchoolHome> {
   }
 
   Future<void> _load() async {
-    final db = DatabaseHelper.instance;
-    final legacy = await SharedPreferences.getInstance();
+    final p = await SharedPreferences.getInstance();
     try {
-      // Migration unique: si SQLite est encore vide, récupère les anciennes données
-      // SharedPreferences avant de basculer vers SQLite.
-      if (await db.isEmpty()) {
-        final oldKeys = <String>[
-          'levels', 'groups', 'students', 'assessments', 'attendance',
-          'grades', 'questions', 'remarks'
-        ];
-        final migration = <String, String>{};
-        for (final key in oldKeys) {
-          final value = legacy.getString(key);
-          if (value != null) migration[key] = value;
-        }
-        if (migration.isNotEmpty) await db.setMany(migration);
-      }
-
-      final stored = await db.getAll();
-      String value(String key, String fallback) => stored[key] ?? fallback;
-
-      levels = List<String>.from(jsonDecode(value('levels', '["Niveau 1"]')));
-      groups = List<String>.from(jsonDecode(value('groups', '["Groupe A"]')));
-      students = (jsonDecode(value('students', '[]')) as List)
-          .map((e) => Student.fromJson(Map<String, dynamic>.from(e))).toList();
-      assessments = (jsonDecode(value('assessments', '[]')) as List)
-          .map((e) => Assessment.fromJson(Map<String, dynamic>.from(e))).toList();
-      attendance = (jsonDecode(value('attendance', '[]')) as List)
-          .map((e) => AttendanceRecord.fromJson(Map<String, dynamic>.from(e))).toList();
-      grades = (jsonDecode(value('grades', '[]')) as List)
-          .map((e) => GradeRecord.fromJson(Map<String, dynamic>.from(e))).toList();
-      questionBank = (jsonDecode(value('questions', '[]')) as List).map((e) {
-        final j = Map<String, dynamic>.from(e);
-        return ExamQuestion(
-          j['prompt'] ?? '', j['category'] ?? 'QCU',
-          List<String>.from(j['choices'] ?? []), j['answer'] ?? '',
-          (j['points'] as num?)?.toDouble() ?? 1,
-        );
-      }).toList();
-      remarks.addAll(Map<String, String>.from(jsonDecode(value('remarks', '{}'))));
-    } catch (e) {
-      // Pa kite erè done yo bloke ouvèti aplikasyon an; done ki te li yo konsève.
-      debugPrint('Erreur de chargement SQLite: $e');
-    }
+      levels = List<String>.from(jsonDecode(p.getString('levels') ?? '["Niveau 1"]'));
+      groups = List<String>.from(jsonDecode(p.getString('groups') ?? '["Groupe A"]'));
+      students = (jsonDecode(p.getString('students') ?? '[]') as List).map((e) => Student.fromJson(e)).toList();
+      assessments = (jsonDecode(p.getString('assessments') ?? '[]') as List).map((e) => Assessment.fromJson(e)).toList();
+      attendance = (jsonDecode(p.getString('attendance') ?? '[]') as List).map((e) => AttendanceRecord.fromJson(e)).toList();
+      grades = (jsonDecode(p.getString('grades') ?? '[]') as List).map((e) => GradeRecord.fromJson(e)).toList();
+      questionBank = (jsonDecode(p.getString('questions') ?? '[]') as List).map((e) => ExamQuestion(
+        e['prompt'] ?? '', e['category'] ?? 'QCU',
+        List<String>.from(e['choices'] ?? []), e['answer'] ?? '',
+        (e['points'] as num?)?.toDouble() ?? 1,
+      )).toList();
+      remarks.addAll(Map<String, String>.from(jsonDecode(p.getString('remarks') ?? '{}')));
+    } catch (_) {}
     if (mounted) setState(() => loading = false);
   }
 
   Future<void> _save() async {
-    final db = DatabaseHelper.instance;
-    await db.setMany({
-      'levels': jsonEncode(levels),
-      'groups': jsonEncode(groups),
-      'students': jsonEncode(students.map((e) => e.toJson()).toList()),
-      'assessments': jsonEncode(assessments.map((e) => e.toJson()).toList()),
-      'attendance': jsonEncode(attendance.map((e) => e.toJson()).toList()),
-      'grades': jsonEncode(grades.map((e) => e.toJson()).toList()),
-      'questions': jsonEncode(questionBank.map((e) => e.toJson()).toList()),
-      'remarks': jsonEncode(remarks),
-    });
+    final p = await SharedPreferences.getInstance();
+    await p.setString('levels', jsonEncode(levels));
+    await p.setString('groups', jsonEncode(groups));
+    await p.setString('students', jsonEncode(students.map((e) => e.toJson()).toList()));
+    await p.setString('assessments', jsonEncode(assessments.map((e) => e.toJson()).toList()));
+    await p.setString('attendance', jsonEncode(attendance.map((e) => e.toJson()).toList()));
+    await p.setString('grades', jsonEncode(grades.map((e) => e.toJson()).toList()));
+    await p.setString('questions', jsonEncode(questionBank.map((e) => e.toJson()).toList()));
+    await p.setString('remarks', jsonEncode(remarks));
   }
 
   String _id() => DateTime.now().microsecondsSinceEpoch.toString();
@@ -181,16 +146,16 @@ class _SchoolHomeState extends State<SchoolHome> {
       content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextField(controller: name, decoration: const InputDecoration(labelText: 'Nom complet')),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(initialValue: level, items: levels.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => level = v ?? level), decoration: const InputDecoration(labelText: 'Niveau')),
+        DropdownButtonFormField<String>(value: level, items: levels.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => level = v ?? level), decoration: const InputDecoration(labelText: 'Niveau')),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(initialValue: group, items: groups.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => group = v ?? group), decoration: const InputDecoration(labelText: 'Groupe')),
+        DropdownButtonFormField<String>(value: group, items: groups.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => group = v ?? group), decoration: const InputDecoration(labelText: 'Groupe')),
       ])),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
         FilledButton(onPressed: () async {
           if (name.text.trim().isNotEmpty) {
             setState(() => students.add(Student(_id(), name.text.trim(), level, group)));
-            await _save(); if (ctx.mounted) Navigator.pop(ctx);
+            await _save(); if (mounted) Navigator.pop(ctx);
           }
         }, child: const Text('Ajouter')),
       ],
@@ -206,8 +171,8 @@ class _SchoolHomeState extends State<SchoolHome> {
       content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextField(controller: title, decoration: const InputDecoration(labelText: 'Titre')),
         TextField(controller: max, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Note maximale')),
-        DropdownButtonFormField<String>(initialValue: level, items: levels.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => level = v ?? level), decoration: const InputDecoration(labelText: 'Niveau')),
-        DropdownButtonFormField<String>(initialValue: group, items: groups.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => group = v ?? group), decoration: const InputDecoration(labelText: 'Groupe')),
+        DropdownButtonFormField<String>(value: level, items: levels.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => level = v ?? level), decoration: const InputDecoration(labelText: 'Niveau')),
+        DropdownButtonFormField<String>(value: group, items: groups.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => group = v ?? group), decoration: const InputDecoration(labelText: 'Groupe')),
       ])),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
@@ -215,7 +180,7 @@ class _SchoolHomeState extends State<SchoolHome> {
           final n = double.tryParse(max.text) ?? 100;
           if (title.text.trim().isNotEmpty && n > 0) {
             setState(() => assessments.add(Assessment(_id(), title.text.trim(), category, level, group, DateTime.now().toIso8601String().substring(0,10), 'Manuel', n)));
-            await _save(); if (ctx.mounted) Navigator.pop(ctx);
+            await _save(); if (mounted) Navigator.pop(ctx);
           }
         }, child: const Text('Créer')),
       ],
@@ -249,7 +214,7 @@ class _SchoolHomeState extends State<SchoolHome> {
             grades.removeWhere((g) => g.studentId == s.id && g.assessmentId == a.id);
             grades.add(GradeRecord(s.id, a.id, val, ''));
           }
-          await _save(); if (mounted && ctx.mounted) { Navigator.pop(ctx); setState(() {}); _msg('Notes enregistrées.'); }
+          await _save(); if (mounted) { Navigator.pop(ctx); setState(() {}); _msg('Notes enregistrées.'); }
         }, child: const Text('Enregistrer les notes')),
       ],
     ));
@@ -291,7 +256,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     await showDialog<void>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
       title: const Text('Ajouter une question à la banque'),
       content: SizedBox(width: 500, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        DropdownButtonFormField<String>(initialValue: category, items: const ['QCU','QCM','Compléter','Définition','Subjectif'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => category = v ?? category), decoration: const InputDecoration(labelText: 'Catégorie')),
+        DropdownButtonFormField<String>(value: category, items: const ['QCU','QCM','Compléter','Définition','Subjectif'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => category = v ?? category), decoration: const InputDecoration(labelText: 'Catégorie')),
         TextField(controller: prompt, decoration: const InputDecoration(labelText: 'Question')),
         TextField(controller: choices, decoration: const InputDecoration(labelText: 'Choix séparés par | (QCM/QCU)')),
         TextField(controller: answer, decoration: const InputDecoration(labelText: 'Réponse attendue / corrigé')),
@@ -302,7 +267,7 @@ class _SchoolHomeState extends State<SchoolHome> {
         FilledButton(onPressed: () async {
           if (prompt.text.trim().isEmpty) return;
           questionBank.add(ExamQuestion(prompt.text.trim(), category, choices.text.split('|').map((e) => e.trim()).where((e) => e.isNotEmpty).toList(), answer.text.trim(), double.tryParse(points.text) ?? 1));
-          await _save(); if (mounted && ctx.mounted) { Navigator.pop(ctx); setState(() {}); }
+          await _save(); if (mounted) { Navigator.pop(ctx); setState(() {}); }
         }, child: const Text('Ajouter')),
       ],
     )));
@@ -315,7 +280,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     await showDialog<void>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
       title: const Text('Générer un examen'),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        DropdownButtonFormField<String>(initialValue: category, items: const ['Toutes','QCU','QCM','Compléter','Définition','Subjectif'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => category = v ?? category)),
+        DropdownButtonFormField<String>(value: category, items: const ['Toutes','QCU','QCM','Compléter','Définition','Subjectif'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => category = v ?? category)),
         TextField(controller: count, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nombre de questions')),
         const SizedBox(height: 8),
         const Text('Le générateur choisit des questions existantes au hasard. Il ne crée pas de nouvelles questions par IA.'),
@@ -327,7 +292,7 @@ class _SchoolHomeState extends State<SchoolHome> {
           final n = int.tryParse(count.text) ?? 0;
           if (n < 1 || n > pool.length) { _msg('Nombre invalide. Questions disponibles: ${pool.length}.'); return; }
           final chosen = pool.take(n).toList();
-          if (ctx.mounted) Navigator.pop(ctx);
+          if (mounted) Navigator.pop(ctx);
           await _showExamPreview(chosen, category);
         }, child: const Text('Générer')),
       ],
@@ -355,7 +320,7 @@ class _SchoolHomeState extends State<SchoolHome> {
         FilledButton.icon(onPressed: () async {
           final doc = pw.Document();
           doc.addPage(pw.MultiPage(build: (_) => [
-            pw.Text('DP SCOLAIRE · EXAMEN', style: const pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+            pw.Text('DP SCOLAIRE · EXAMEN', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
             pw.SizedBox(height: 12),
             pw.Text('Nom: __________________________________    Date: ______________'),
             pw.SizedBox(height: 16),
@@ -423,7 +388,11 @@ class _SchoolHomeState extends State<SchoolHome> {
 
   Future<void> _exportBackup() async {
     final data = {
-      'levels': levels, 'groups': groups,
+      'format': 'dp_scolaire_backup',
+      'version': 1,
+      'createdAt': DateTime.now().toIso8601String(),
+      'levels': levels,
+      'groups': groups,
       'students': students.map((e) => e.toJson()).toList(),
       'assessments': assessments.map((e) => e.toJson()).toList(),
       'attendance': attendance.map((e) => e.toJson()).toList(),
@@ -431,14 +400,90 @@ class _SchoolHomeState extends State<SchoolHome> {
       'questions': questionBank.map((e) => e.toJson()).toList(),
       'remarks': remarks,
     };
+    final bytes = utf8.encode(const JsonEncoder.withIndent('  ').convert(data));
     final result = await FilePicker.platform.saveFile(
-      dialogTitle: 'Exporter une sauvegarde EducaDim',
-      fileName: 'educadim_sauvegarde.json',
+      dialogTitle: 'Exporter une sauvegarde DP Scolaire',
+      fileName: 'DP_Scolaire_Backup_${DateTime.now().toIso8601String().substring(0, 10)}.json',
       type: FileType.custom,
       allowedExtensions: ['json'],
-      bytes: utf8.encode(const JsonEncoder.withIndent('  ').convert(data)),
+      bytes: bytes,
     );
-    if (result != null) _msg('Sauvegarde exportée.');
+    if (result == null) return;
+    try {
+      // Le partage utilise le fichier sauvegardé afin que l’utilisateur choisisse
+      // Bluetooth, Quick Share, e-mail, USB ou une autre application compatible.
+      await Share.shareXFiles(
+        [XFile(result, mimeType: 'application/json', name: 'DP_Scolaire_Backup.json')],
+        subject: 'Sauvegarde DP Scolaire',
+        text: 'Sauvegarde des données DP Scolaire. Conservez ce fichier en sécurité.',
+      );
+    } catch (_) {
+      if (mounted) _msg('Sauvegarde enregistrée : $result');
+    }
+  }
+
+  Future<void> _importBackup() async {
+    final picked = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Choisir une sauvegarde DP Scolaire',
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final file = picked.files.single;
+    final raw = file.bytes;
+    if (raw == null) {
+      _msg('Impossible de lire ce fichier. Choisissez un fichier JSON accessible.');
+      return;
+    }
+    Map<String, dynamic> data;
+    try {
+      data = Map<String, dynamic>.from(jsonDecode(utf8.decode(raw)) as Map);
+      if (data['format'] != 'dp_scolaire_backup' || data['version'] != 1) {
+        _msg('Ce fichier n’est pas une sauvegarde DP Scolaire reconnue.');
+        return;
+      }
+      if (data['levels'] is! List || data['groups'] is! List || data['students'] is! List) {
+        _msg('Le fichier de sauvegarde est incomplet ou invalide.');
+        return;
+      }
+    } catch (_) {
+      _msg('Le fichier JSON est invalide ou endommagé.');
+      return;
+    }
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remplacer les données actuelles ?'),
+        content: const Text('L’importation remplacera les données actuellement affichées dans DP Scolaire. Exportez une sauvegarde avant de continuer.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Importer')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      levels = List<String>.from(data['levels'] as List);
+      groups = List<String>.from(data['groups'] as List);
+      students = (data['students'] as List).map((e) => Student.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      assessments = ((data['assessments'] as List?) ?? []).map((e) => Assessment.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      attendance = ((data['attendance'] as List?) ?? []).map((e) => AttendanceRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      grades = ((data['grades'] as List?) ?? []).map((e) => GradeRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      questionBank = ((data['questions'] as List?) ?? []).map((e) {
+        final q = Map<String, dynamic>.from(e as Map);
+        return ExamQuestion(q['prompt'] ?? '', q['category'] ?? 'QCU', List<String>.from(q['choices'] ?? []), q['answer'] ?? '', (q['points'] as num?)?.toDouble() ?? 1);
+      }).toList();
+      remarks.addAll(Map<String, String>.from(data['remarks'] ?? {}));
+      await _save();
+      if (mounted) {
+        setState(() {});
+        _msg('Sauvegarde importée avec succès.');
+      }
+    } catch (e) {
+      if (mounted) _msg('Erreur pendant l’importation : $e');
+    }
   }
 
   Future<void> _editRemarks() async {
@@ -454,7 +499,7 @@ class _SchoolHomeState extends State<SchoolHome> {
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
         FilledButton(onPressed: () async {
           for (final k in labels) { remarks[k] = ctrls[k]!.text.trim(); }
-          await _save(); if (mounted && ctx.mounted) { Navigator.pop(ctx); setState(() {}); }
+          await _save(); if (mounted) { Navigator.pop(ctx); setState(() {}); }
         }, child: const Text('Enregistrer')),
       ],
     ));
@@ -603,7 +648,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     const SizedBox(height: 12),
     Expanded(child: assessments.isEmpty ? const Center(child: Text('Aucune évaluation.')) : ListView.builder(itemCount: assessments.length, itemBuilder: (_, i) {
       final a = assessments[i];
-      return Card(child: ListTile(title: Text(a.title), subtitle: Text('${a.category} · ${a.level} / ${a.group} · max ${a.maxScore}'), trailing: FilledButton(onPressed: () => _enterGrades(a), child: const Text('Saisir notes'))));
+      return Card(child: ListTile(title: Text(a.title), subtitle: Text('${a.category} · ${a.level} / ${a.group} · max ${a.maxScore}'), trailing: FilledButton(onPressed: () => _enterGrades(a), child: const Text('Saisir notes')));
     })),
   ]));
 
@@ -655,7 +700,8 @@ class _SchoolHomeState extends State<SchoolHome> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('DP Scolaire'), actions: [
-        IconButton(tooltip: 'Sauvegarder', onPressed: _exportBackup, icon: const Icon(Icons.backup)),
+        IconButton(tooltip: 'Importer une sauvegarde', onPressed: _importBackup, icon: const Icon(Icons.file_open)),
+        IconButton(tooltip: 'Exporter et partager une sauvegarde', onPressed: _exportBackup, icon: const Icon(Icons.share)),
       ]),
       body: Row(children: [
         NavigationRail(
