@@ -25,6 +25,33 @@ jobs:
       - name: Generate Android platform files
         run: flutter create --platforms=android .
 
+      # Some plugins now require Android API 36. Flutter's generated Android
+      # template may use an older compileSdk, so raise it before resolving/building.
+      - name: Set Android compile SDK to 36
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          candidates = [Path('android/app/build.gradle'), Path('android/app/build.gradle.kts')]
+          found = False
+          for path in candidates:
+              if not path.exists():
+                  continue
+              text = path.read_text()
+              updated = text.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 36')
+              updated = updated.replace('compileSdkVersion flutter.compileSdkVersion', 'compileSdkVersion 36')
+              updated = updated.replace('compileSdkVersion flutter.compileSdkVersion.toInt()', 'compileSdkVersion 36')
+              if updated != text:
+                  path.write_text(updated)
+                  found = True
+                  print(f'Updated compile SDK in {path} to 36')
+              elif 'compileSdk = 36' in text or 'compileSdkVersion 36' in text:
+                  found = True
+                  print(f'{path} already uses compile SDK 36')
+          if not found:
+              raise SystemExit('Could not find the Android app Gradle compileSdk setting')
+          PYCODE
+
       - name: Install dependencies
         run: flutter pub get
 
