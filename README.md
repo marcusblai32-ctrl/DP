@@ -1,31 +1,48 @@
-# DP — Dimension Production | Suivi hors ligne
+# DP Scolaire — projet Flutter complet
 
-Application Flutter de départ pour gérer les élèves, devoirs, statuts et évaluations sans connexion Internet. Les données sont enregistrées localement dans SQLite.
+Application Flutter/Dart de gestion scolaire locale, conçue pour Android et Windows. L'interface et les documents portent le nom **DP Scolaire**.
 
-## Fonctions incluses
-- Ajout/suppression d'élèves, avec Dimension et sous-groupe.
-- Création de devoirs avec chapitre/pages, échéance et consignes.
-- Enregistrement du statut d'un devoir pour un élève : AF, NR, R, V, AR, VAL.
-- Évaluations par chapitre : pratique /70, théorie /20, discipline-présence /10.
-- Décision automatique indicative : 70–100 validé ; 50–69 rattrapage ciblé ; 0–49 reprise du cycle.
-- Export des données en PDF, Excel (.xlsx) et Word (.docx), via le menu de partage Android.
-- Nom affiché sur Android : **DP**.
-- Icône Android générée à partir de `assets/dp_icon.png` (image fournie).
-- GitHub Actions pour compiler un APK Android automatiquement.
+## Fonctions déjà présentes dans cette version
+- Gestion des élèves, niveaux et groupes dynamiques.
+- Appel avec statuts Présent, Absent, Retard et Excusé.
+- Création des devoirs/évaluations et saisie des notes par élève.
+- Banque de questions : QCU, QCM, Compléter, Définition et Subjectif.
+- Génération aléatoire d'un sujet à partir de la banque, aperçu et impression PDF.
+- Calcul des moyennes, notes en lettres et appréciations modifiables.
+- Bulletin individuel PDF et palmarès exportable en CSV.
+- Sauvegarde JSON et bouton de suppression de l'historique (les élèves, niveaux et groupes sont conservés).
+- Données conservées localement sur chaque appareil avec SharedPreferences.
+- Code de modèles et calculs séparés dans des fichiers Dart distincts.
 
-## Préparer le projet
-1. Installez Flutter stable et Android Studio/Android SDK.
-2. Créez la structure Android du projet en exécutant dans ce dossier : `flutter create --platforms=android .`
-3. Lancez `flutter pub get`.
-4. Lancez `flutter run` sur un appareil Android ou un émulateur.
+## Limites à connaître
+- Cette archive n'a pas été compilée dans l'environnement de création. Il faut vérifier les résultats GitHub Actions avant installation.
+- Les données ne sont pas synchronisées entre le téléphone et le PC. Chaque installation possède ses propres données.
+- La génération de sujet choisit parmi les questions saisies par l'utilisateur; elle ne crée pas de questions par IA.
+- La correction automatique des réponses des élèves, les coefficients personnalisés, les modèles multiples de bulletins et les fiches d'évaluation PDF détaillées ne sont pas encore implémentés.
+- Le palmarès actuel est global; il ne propose pas encore de filtres de classement par niveau/groupe.
+- Le bouton d'appel permet de sélectionner le statut de chaque élève, mais cette version ne fournit pas encore des rapports statistiques avancés de présence.
 
-## Générer l'APK sur GitHub
-1. Envoyez le contenu de ce dossier (y compris `.github/`, `assets/`, `lib/` et `pubspec.yaml`) à la racine du dépôt GitHub `DP`. Ne téléversez pas seulement le dossier parent.
-2. Dans l'onglet Actions, lancez **Build Android APK**, ou faites un push sur la branche `main`/`master`.
-3. Téléchargez l'artifact `DP-android-apk` depuis l'exécution réussie.
+## Générer l'APK Android et la version Windows avec GitHub
+1. Décompressez tout le ZIP.
+2. Importez **tout le contenu** du dossier `DP_Scolaire_Complet` dans le dépôt GitHub, en conservant le dossier caché `.github`.
+3. Faites un commit/push vers la branche `main` ou `master`.
+4. Dans le dépôt GitHub, ouvrez **Actions** puis le workflow **Build Android + Windows**.
+5. Attendez que les deux tâches soient vertes.
+6. Ouvrez l'exécution terminée, puis téléchargez les artefacts `dp-scolaire-android-apk` et `dp-scolaire-windows-release`.
 
-## Limites de cette première version
-- Les exports sont des rapports de données, pas encore des formulaires de certificat ou des bulletins graphiques personnalisés.
-- Il n'y a pas encore d'importation depuis les anciens PDF/Word/Excel : ces formats sont prévus ici comme formats d'export. L'import/export de sauvegarde structurée devra être ajouté séparément.
-- Les données restent sur le téléphone. Désinstaller l'application ou effacer ses données peut les supprimer : exportez régulièrement des copies.
-- Les fonctions de suivi des statuts et les évaluations doivent être testées sur appareil réel avant usage officiel.
+### Installer
+- Android : téléchargez l'artefact APK, extrayez-le si nécessaire, puis ouvrez le fichier APK sur le téléphone et autorisez l'installation depuis cette source si Android le demande.
+- Windows : téléchargez et extrayez l'archive Windows. Conservez **tout** le contenu du dossier `Release`; lancez `dp_scolaire.exe` à l'intérieur. Ne déplacez pas l'EXE seul.
+
+## Construction locale
+Installez Flutter stable et les outils requis par la plateforme, puis lancez :
+
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --release
+flutter build windows --release
+```
+
+La construction Windows doit se faire sous Windows avec les outils de compilation Windows installés.
