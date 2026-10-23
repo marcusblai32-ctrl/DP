@@ -1,4 +1,4 @@
-name: Build DP Scolaire Android + Windows
+name: Build DP Android + Windows
 
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ jobs:
   android:
     name: Build Android APK
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -28,38 +29,94 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Generate DP app launcher icon
+      - name: Verify application logo
+        shell: bash
+        run: |
+          if [ ! -f assets/dp_icon.png ]; then
+            echo "ERROR: assets/dp_icon.png not found."
+            exit 1
+          fi
+
+      - name: Generate Android launcher icon
         run: dart run flutter_launcher_icons
 
       - name: Set Android app name to DP
-        run: sed -i 's/android:label="[^"]*"/android:label="DP"/' android/app/src/main/AndroidManifest.xml
-
-      - name: Set Android compile SDK to 36 for plugins
         shell: bash
         run: |
-          python3 - <<'PYCODE'
+          python3 - <<'PY'
           from pathlib import Path
           import re
-          roots = [Path('android'), Path.home() / '.pub-cache' / 'hosted']
-          pattern = re.compile(r'(?m)^(\s*compileSdk(?:Version)?\s*(?:=\s*)?)(?:flutter\.compileSdkVersion|\d+)(\s*(?://.*)?$)')
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          if not manifest.exists():
+              raise SystemExit(f"ERROR: {manifest} not found")
+
+          text = manifest.read_text(encoding="utf-8")
+
+          if re.search(r'android:label="[^"]*"', text):
+              text = re.sub(
+                  r'android:label="[^"]*"',
+                  'android:label="DP"',
+                  text,
+                  count=1
+              )
+          else:
+              text = text.replace(
+                  "<application",
+                  '<application android:label="DP"',
+                  1
+              )
+
+          manifest.write_text(text, encoding="utf-8")
+          print("Android application name set to DP.")
+          PY
+
+      - name: Set Android compile SDK to 36
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          roots = [
+              Path("android"),
+              Path.home() / ".pub-cache" / "hosted"
+          ]
+
+          pattern = re.compile(
+              r'(?m)^(\s*compileSdk(?:Version)?\s*(?:=\s*)?)'
+              r'(?:flutter\.compileSdkVersion|\d+)'
+              r'(\s*(?://.*)?$)'
+          )
+
           changed = []
+
           for root in roots:
               if not root.exists():
                   continue
-              for file in root.rglob('*'):
-                  if file.name not in ('build.gradle', 'build.gradle.kts'):
+
+              for file in root.rglob("*"):
+                  if file.name not in ("build.gradle", "build.gradle.kts"):
                       continue
+
                   try:
-                      original = file.read_text()
-                  except (UnicodeDecodeError, OSError):
+                      original = file.read_text(encoding="utf-8")
+                  except (OSError, UnicodeDecodeError):
                       continue
-                  updated, count = pattern.subn(r'\g<1>36\g<2>', original)
+
+                  updated, count = pattern.subn(
+                      lambda match: match.group(1) + "36" + match.group(2),
+                      original
+                  )
+
                   if count and updated != original:
-                      file.write_text(updated)
+                      file.write_text(updated, encoding="utf-8")
                       changed.append(str(file))
-          print('Gradle files updated for compileSdk 36:')
-          print('\n'.join(changed) if changed else 'No matching declarations found')
-          PYCODE
+
+          print("Gradle files updated:")
+          print("\n".join(changed) if changed else
+                "No matching declarations found; checking build output will be important.")
+          PY
 
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
@@ -70,7 +127,7 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: dp-scolaire-android-apk
+          name: DP-Android-APK
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -78,6 +135,7 @@ jobs:
   windows:
     name: Build Windows application
     runs-on: windows-latest
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -94,7 +152,15 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Generate DP app launcher icon for Windows
+      - name: Verify application logo
+        shell: pwsh
+        run: |
+          if (!(Test-Path "assets/dp_icon.png")) {
+            Write-Error "ERROR: assets/dp_icon.png not found."
+            exit 1
+          }
+
+      - name: Generate Windows launcher icon
         run: dart run flutter_launcher_icons
 
       - name: Analyze Dart code
@@ -105,12 +171,16 @@ jobs:
 
       - name: Archive Windows release files
         shell: pwsh
-        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dp-scolaire-windows-release.zip -Force
+        run: |
+          Compress-Archive `
+            -Path build/windows/x64/runner/Release/* `
+            -DestinationPath DP-Windows-Release.zip `
+            -Force
 
       - name: Upload Windows application
         uses: actions/upload-artifact@v4
         with:
-          name: dp-scolaire-windows-release
-          path: dp-scolaire-windows-release.zip
+          name: DP-Windows-Release
+          path: DP-Windows-Release.zip
           if-no-files-found: error
           retention-days: 14
