@@ -12,7 +12,7 @@ class DimensionApp extends StatelessWidget {
   const DimensionApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'Dimension Production', debugShowCheckedModeBanner: false,
+    title: 'DP', debugShowCheckedModeBanner: false,
     theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF174A8B)), useMaterial3: true),
     home: const HomePage(),
   );
@@ -115,9 +115,9 @@ class _AssessmentPageState extends State<AssessmentPage> {
   List<Map<String, Object?>> recent = [];
   @override void initState() { super.initState(); load(); }
   Future<void> load() async { students = await LocalDb.instance.students(); recent = await LocalDb.instance.assessments(); studentId ??= students.isEmpty ? null : students.first['id'] as int; if (mounted) setState(() {}); }
-  double num(TextEditingController c) => double.tryParse(c.text.replaceAll(',', '.')) ?? 0;
-  Future<void> save() async { if (studentId == null || chapter.text.trim().isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Choisissez un élève et saisissez le chapitre.'))); return; } if (num(practical)>70 || num(theory)>20 || num(discipline)>10 || num(practical)<0 || num(theory)<0 || num(discipline)<0) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Barème : pratique /70, théorie /20, discipline-présence /10.'))); return; }
-    await LocalDb.instance.addAssessment(studentId: studentId!, chapter: chapter.text, practical: num(practical), theory: num(theory), discipline: num(discipline), notes: notes.text); chapter.clear(); notes.clear(); await load(); }
+  double parseScore(TextEditingController c) => double.tryParse(c.text.replaceAll(',', '.')) ?? 0;
+  Future<void> save() async { if (studentId == null || chapter.text.trim().isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Choisissez un élève et saisissez le chapitre.'))); return; } if (parseScore(practical)>70 || parseScore(theory)>20 || parseScore(discipline)>10 || parseScore(practical)<0 || parseScore(theory)<0 || parseScore(discipline)<0) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Barème : pratique /70, théorie /20, discipline-présence /10.'))); return; }
+    await LocalDb.instance.addAssessment(studentId: studentId!, chapter: chapter.text, practical: parseScore(practical), theory: parseScore(theory), discipline: parseScore(discipline), notes: notes.text); chapter.clear(); notes.clear(); await load(); }
   String decision(double total) => total >= 70 ? 'Validé' : total >= 50 ? 'Rattrapage ciblé' : 'Reprise du cycle';
   @override Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [Text('Évaluation de chapitre', style: Theme.of(context).textTheme.titleLarge), const SizedBox(height: 10),
     if (students.isEmpty) const Text('Ajoutez un élève dans l’onglet Élèves avant de noter.'),
