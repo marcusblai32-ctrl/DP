@@ -648,7 +648,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     const SizedBox(height: 12),
     Expanded(child: assessments.isEmpty ? const Center(child: Text('Aucune évaluation.')) : ListView.builder(itemCount: assessments.length, itemBuilder: (_, i) {
       final a = assessments[i];
-      return Card(child: ListTile(title: Text(a.title), subtitle: Text('${a.category} · ${a.level} / ${a.group} · max ${a.maxScore}'), trailing: FilledButton(onPressed: () => _enterGrades(a), child: const Text('Saisir notes')));
+      return Card(child: ListTile(title: Text(a.title), subtitle: Text('${a.category} · ${a.level} / ${a.group} · max ${a.maxScore}'), trailing: FilledButton(onPressed: () => _enterGrades(a), child: const Text('Saisir notes'))));
     })),
   ]));
 
