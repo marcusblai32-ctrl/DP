@@ -1,5 +1,5 @@
 name: dp_scolaire
-description: DP Scolaire, application de gestion scolaire hors ligne en Flutter et Dart.
+description: DP, application de gestion scolaire hors ligne en Flutter et Dart.
 publish_to: "none"
 version: 1.0.0+1
 
@@ -15,6 +15,9 @@ dependencies:
   file_picker: ^8.1.2
   path_provider: ^2.1.4
   share_plus: ^10.1.4
+  path: ^1.9.0
+  sqflite: ^2.4.1
+  sqflite_common_ffi: ^2.3.4+4
 
 dev_dependencies:
   flutter_test:
