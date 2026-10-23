@@ -1,20 +1,16 @@
-CORRECTION DU TEST DP SCOLAIRE
+DP SCOLAIRE — CORRECTION DU BUILD
 
-Le journal montre que le fichier fautif est lib/test/widget_test.dart.
-Un test Flutter ne doit pas être placé dans lib/ : Flutter analyse alors
-flutter_test comme une dépendance normale de l'application.
+Fichiers à remplacer à la racine du dépôt :
+- pubspec.yaml
+- lib/main.dart
 
-À faire dans le dépôt GitHub :
-1. SUPPRIMER le fichier lib/test/widget_test.dart.
-2. Garder/créer le fichier test/widget_test.dart à la racine du projet
-   (au même niveau que lib/ et pubspec.yaml).
-3. Remplacer son contenu par celui fourni dans test/widget_test.dart.
-4. Vérifier dans pubspec.yaml que ceci existe sous dev_dependencies :
+Corrections :
+1. Ajout des dépendances path, sqflite et sqflite_common_ffi requises par lib/database/database_helper.dart.
+2. Ajout de la parenthèse fermante manquante dans la page Évaluations et notes (main.dart).
 
-  flutter_test:
-    sdk: flutter
+Après avoir appliqué les deux fichiers :
+1. Ouvrir le dépôt GitHub et remplacer les fichiers aux chemins indiqués.
+2. Lancer GitHub Actions (workflow Build DP Scolaire Android + Windows).
+3. Si une nouvelle erreur apparaît, envoyer le log complet du premier bloc « error ».
 
-5. Lancer flutter pub get puis relancer GitHub Actions.
-
-Le test fait référence à SchoolApp, qui est la classe présente dans
-lib/main.dart. Il ne faut pas utiliser MyApp.
+Note : la page principale utilise encore SharedPreferences pour charger/sauvegarder les données. Le DatabaseHelper SQLite est présent mais n'est pas encore branché à l'interface; ce patch corrige sa compilation, il ne migre pas les données vers SQLite.
