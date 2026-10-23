@@ -1,4 +1,192 @@
-flutter_launcher_icons:
-  android: true
-  image_path: assets/dp_icon.png
-  min_sdk_android: 21
+name: Build DP Android + Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform files
+        run: flutter create --platforms=android .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify Android icon configuration
+        shell: bash
+        run: |
+          test -f assets/dp_icon.png
+          test -f flutter_launcher_icons_android.yaml
+
+      - name: Generate Android launcher icon
+        run: dart run flutter_launcher_icons -f flutter_launcher_icons_android.yaml
+
+      - name: Set Android app name to DP
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+
+          if not manifest.exists():
+              raise SystemExit("AndroidManifest.xml not found")
+
+          content = manifest.read_text(encoding="utf-8")
+          content, count = re.subn(
+              r'android:label="[^"]*"',
+              'android:label="DP"',
+              content,
+              count=1
+          )
+
+          if count == 0:
+              content = content.replace(
+                  "<application",
+                  '<application android:label="DP"',
+                  1
+              )
+
+          manifest.write_text(content, encoding="utf-8")
+          print("Android app name set to DP")
+          PY
+
+      - name: Set Android compile SDK to 36
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          roots = [
+              Path("android"),
+              Path.home() / ".pub-cache" / "hosted"
+          ]
+
+          pattern = re.compile(
+              r'(?m)^(\s*compileSdk(?:Version)?\s*(?:=\s*)?)'
+              r'(?:flutter\.compileSdkVersion|\d+)'
+              r'(\s*(?://.*)?$)'
+          )
+
+          changed = []
+
+          for root in roots:
+              if not root.exists():
+                  continue
+
+              for file in root.rglob("*"):
+                  if file.name not in (
+                      "build.gradle",
+                      "build.gradle.kts"
+                  ):
+                      continue
+
+                  try:
+                      original = file.read_text(encoding="utf-8")
+                  except (OSError, UnicodeDecodeError):
+                      continue
+
+                  updated, count = pattern.subn(
+                      lambda m: m.group(1) + "36" + m.group(2),
+                      original
+                  )
+
+                  if count and updated != original:
+                      file.write_text(updated, encoding="utf-8")
+                      changed.append(str(file))
+
+          print("Gradle files updated:")
+          print("\n".join(changed) if changed else
+                "No matching declarations found")
+          PY
+
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DP-Android-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Build Windows application
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows platform files
+        run: flutter create --platforms=windows .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify Windows icon configuration
+        shell: pwsh
+        run: |
+          if (!(Test-Path "assets/dp_icon.png")) {
+            throw "Logo assets/dp_icon.png not found"
+          }
+
+          if (!(Test-Path "flutter_launcher_icons_windows.yaml")) {
+            throw "Windows icon configuration not found"
+          }
+
+      - name: Generate Windows launcher icon
+        run: dart run flutter_launcher_icons -f flutter_launcher_icons_windows.yaml
+
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Archive Windows release files
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path build/windows/x64/runner/Release/* `
+            -DestinationPath DP-Windows-Release.zip `
+            -Force
+
+      - name: Upload Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: DP-Windows-Release
+          path: DP-Windows-Release.zip
+          if-no-files-found: error
+          retention-days: 14
