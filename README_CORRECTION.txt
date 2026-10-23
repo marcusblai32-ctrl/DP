@@ -1,18 +1,20 @@
-DP SCOLAIRE — CORRECTION DE L'ERREUR flutter analyze
+CORRECTION DU TEST DP SCOLAIRE
 
-Ce ZIP contient uniquement les fichiers à remplacer :
+Le journal montre que le fichier fautif est lib/test/widget_test.dart.
+Un test Flutter ne doit pas être placé dans lib/ : Flutter analyse alors
+flutter_test comme une dépendance normale de l'application.
 
-1. lib/main.dart
-   - Corrige la parenthèse manquante à la ligne de la liste des évaluations.
-   - Met à jour DropdownButtonFormField pour utiliser initialValue.
-   - Corrige les vérifications de BuildContext après des opérations asynchrones.
+À faire dans le dépôt GitHub :
+1. SUPPRIMER le fichier lib/test/widget_test.dart.
+2. Garder/créer le fichier test/widget_test.dart à la racine du projet
+   (au même niveau que lib/ et pubspec.yaml).
+3. Remplacer son contenu par celui fourni dans test/widget_test.dart.
+4. Vérifier dans pubspec.yaml que ceci existe sous dev_dependencies :
 
-2. lib/database/database_helper.dart
-   - Retire l'import sqflite redondant signalé par l'analyseur.
+  flutter_test:
+    sdk: flutter
 
-3. test/widget_test.dart
-   - Remplace la référence obsolète à MyApp par SchoolApp, qui est le nom réel de l'application.
+5. Lancer flutter pub get puis relancer GitHub Actions.
 
-Copiez les fichiers en conservant exactement les chemins, puis poussez vers GitHub. Le workflow devrait alors passer l'analyse syntaxique. Les avertissements informatifs restants, s'il y en a, ne sont pas bloquants avec --no-fatal-infos --no-fatal-warnings.
-
-Important : Flutter n'est pas installé dans l'environnement de préparation, donc cette correction n'a pas été compilée ici. Vérifiez le prochain journal GitHub Actions.
+Le test fait référence à SchoolApp, qui est la classe présente dans
+lib/main.dart. Il ne faut pas utiliser MyApp.
