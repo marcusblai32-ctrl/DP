@@ -14,15 +14,24 @@ dependencies:
   printing: ^5.13.4
   file_picker: ^8.1.2
   path_provider: ^2.1.4
-  path: ^1.9.0
-  sqflite: ^2.4.1
-  sqflite_common_ffi: ^2.3.4+4
   share_plus: ^10.1.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/dp_icon.png
+
+flutter_launcher_icons:
+  android: true
+  windows:
+    generate: true
+    image_path: assets/dp_icon.png
+    icon_size: 48
+  image_path: assets/dp_icon.png
+  min_sdk_android: 21
