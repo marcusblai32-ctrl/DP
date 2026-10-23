@@ -181,16 +181,16 @@ class _SchoolHomeState extends State<SchoolHome> {
       content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextField(controller: name, decoration: const InputDecoration(labelText: 'Nom complet')),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(value: level, items: levels.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => level = v ?? level), decoration: const InputDecoration(labelText: 'Niveau')),
+        DropdownButtonFormField<String>(initialValue: level, items: levels.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => level = v ?? level), decoration: const InputDecoration(labelText: 'Niveau')),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(value: group, items: groups.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => group = v ?? group), decoration: const InputDecoration(labelText: 'Groupe')),
+        DropdownButtonFormField<String>(initialValue: group, items: groups.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => group = v ?? group), decoration: const InputDecoration(labelText: 'Groupe')),
       ])),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
         FilledButton(onPressed: () async {
           if (name.text.trim().isNotEmpty) {
             setState(() => students.add(Student(_id(), name.text.trim(), level, group)));
-            await _save(); if (mounted) Navigator.pop(ctx);
+            await _save(); if (ctx.mounted) Navigator.pop(ctx);
           }
         }, child: const Text('Ajouter')),
       ],
@@ -206,8 +206,8 @@ class _SchoolHomeState extends State<SchoolHome> {
       content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextField(controller: title, decoration: const InputDecoration(labelText: 'Titre')),
         TextField(controller: max, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Note maximale')),
-        DropdownButtonFormField<String>(value: level, items: levels.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => level = v ?? level), decoration: const InputDecoration(labelText: 'Niveau')),
-        DropdownButtonFormField<String>(value: group, items: groups.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => group = v ?? group), decoration: const InputDecoration(labelText: 'Groupe')),
+        DropdownButtonFormField<String>(initialValue: level, items: levels.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => level = v ?? level), decoration: const InputDecoration(labelText: 'Niveau')),
+        DropdownButtonFormField<String>(initialValue: group, items: groups.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => group = v ?? group), decoration: const InputDecoration(labelText: 'Groupe')),
       ])),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
@@ -215,7 +215,7 @@ class _SchoolHomeState extends State<SchoolHome> {
           final n = double.tryParse(max.text) ?? 100;
           if (title.text.trim().isNotEmpty && n > 0) {
             setState(() => assessments.add(Assessment(_id(), title.text.trim(), category, level, group, DateTime.now().toIso8601String().substring(0,10), 'Manuel', n)));
-            await _save(); if (mounted) Navigator.pop(ctx);
+            await _save(); if (ctx.mounted) Navigator.pop(ctx);
           }
         }, child: const Text('Créer')),
       ],
@@ -249,7 +249,7 @@ class _SchoolHomeState extends State<SchoolHome> {
             grades.removeWhere((g) => g.studentId == s.id && g.assessmentId == a.id);
             grades.add(GradeRecord(s.id, a.id, val, ''));
           }
-          await _save(); if (mounted) { Navigator.pop(ctx); setState(() {}); _msg('Notes enregistrées.'); }
+          await _save(); if (mounted && ctx.mounted) { Navigator.pop(ctx); setState(() {}); _msg('Notes enregistrées.'); }
         }, child: const Text('Enregistrer les notes')),
       ],
     ));
@@ -291,7 +291,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     await showDialog<void>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
       title: const Text('Ajouter une question à la banque'),
       content: SizedBox(width: 500, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        DropdownButtonFormField<String>(value: category, items: const ['QCU','QCM','Compléter','Définition','Subjectif'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => category = v ?? category), decoration: const InputDecoration(labelText: 'Catégorie')),
+        DropdownButtonFormField<String>(initialValue: category, items: const ['QCU','QCM','Compléter','Définition','Subjectif'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => category = v ?? category), decoration: const InputDecoration(labelText: 'Catégorie')),
         TextField(controller: prompt, decoration: const InputDecoration(labelText: 'Question')),
         TextField(controller: choices, decoration: const InputDecoration(labelText: 'Choix séparés par | (QCM/QCU)')),
         TextField(controller: answer, decoration: const InputDecoration(labelText: 'Réponse attendue / corrigé')),
@@ -302,7 +302,7 @@ class _SchoolHomeState extends State<SchoolHome> {
         FilledButton(onPressed: () async {
           if (prompt.text.trim().isEmpty) return;
           questionBank.add(ExamQuestion(prompt.text.trim(), category, choices.text.split('|').map((e) => e.trim()).where((e) => e.isNotEmpty).toList(), answer.text.trim(), double.tryParse(points.text) ?? 1));
-          await _save(); if (mounted) { Navigator.pop(ctx); setState(() {}); }
+          await _save(); if (mounted && ctx.mounted) { Navigator.pop(ctx); setState(() {}); }
         }, child: const Text('Ajouter')),
       ],
     )));
@@ -315,7 +315,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     await showDialog<void>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
       title: const Text('Générer un examen'),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        DropdownButtonFormField<String>(value: category, items: const ['Toutes','QCU','QCM','Compléter','Définition','Subjectif'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => category = v ?? category)),
+        DropdownButtonFormField<String>(initialValue: category, items: const ['Toutes','QCU','QCM','Compléter','Définition','Subjectif'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => setD(() => category = v ?? category)),
         TextField(controller: count, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nombre de questions')),
         const SizedBox(height: 8),
         const Text('Le générateur choisit des questions existantes au hasard. Il ne crée pas de nouvelles questions par IA.'),
@@ -327,7 +327,7 @@ class _SchoolHomeState extends State<SchoolHome> {
           final n = int.tryParse(count.text) ?? 0;
           if (n < 1 || n > pool.length) { _msg('Nombre invalide. Questions disponibles: ${pool.length}.'); return; }
           final chosen = pool.take(n).toList();
-          if (mounted) Navigator.pop(ctx);
+          if (ctx.mounted) Navigator.pop(ctx);
           await _showExamPreview(chosen, category);
         }, child: const Text('Générer')),
       ],
@@ -355,7 +355,7 @@ class _SchoolHomeState extends State<SchoolHome> {
         FilledButton.icon(onPressed: () async {
           final doc = pw.Document();
           doc.addPage(pw.MultiPage(build: (_) => [
-            pw.Text('DP SCOLAIRE · EXAMEN', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+            pw.Text('DP SCOLAIRE · EXAMEN', style: const pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
             pw.SizedBox(height: 12),
             pw.Text('Nom: __________________________________    Date: ______________'),
             pw.SizedBox(height: 16),
@@ -454,7 +454,7 @@ class _SchoolHomeState extends State<SchoolHome> {
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
         FilledButton(onPressed: () async {
           for (final k in labels) { remarks[k] = ctrls[k]!.text.trim(); }
-          await _save(); if (mounted) { Navigator.pop(ctx); setState(() {}); }
+          await _save(); if (mounted && ctx.mounted) { Navigator.pop(ctx); setState(() {}); }
         }, child: const Text('Enregistrer')),
       ],
     ));
@@ -603,7 +603,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     const SizedBox(height: 12),
     Expanded(child: assessments.isEmpty ? const Center(child: Text('Aucune évaluation.')) : ListView.builder(itemCount: assessments.length, itemBuilder: (_, i) {
       final a = assessments[i];
-      return Card(child: ListTile(title: Text(a.title), subtitle: Text('${a.category} · ${a.level} / ${a.group} · max ${a.maxScore}'), trailing: FilledButton(onPressed: () => _enterGrades(a), child: const Text('Saisir notes')));
+      return Card(child: ListTile(title: Text(a.title), subtitle: Text('${a.category} · ${a.level} / ${a.group} · max ${a.maxScore}'), trailing: FilledButton(onPressed: () => _enterGrades(a), child: const Text('Saisir notes'))));
     })),
   ]));
 
