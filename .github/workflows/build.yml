@@ -1,0 +1,80 @@
+name: Build DP Scolaire Android + Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform files
+        run: flutter create --platforms=android .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dp-scolaire-android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Build Windows application
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows platform files
+        run: flutter create --platforms=windows .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Archive Windows release files
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dp-scolaire-windows-release.zip -Force
+
+      - name: Upload Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: dp-scolaire-windows-release
+          path: dp-scolaire-windows-release.zip
+          if-no-files-found: error
+          retention-days: 14
