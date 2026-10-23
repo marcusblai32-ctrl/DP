@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'database/database_helper.dart';
 import 'models/student.dart';
 import 'models/assessment.dart';
 import 'models/attendance_record.dart';
@@ -14,7 +15,11 @@ import 'models/grade_record.dart';
 import 'models/exam_question.dart';
 import 'services/grade_service.dart';
 
-void main() => runApp(const SchoolApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await DatabaseHelper.instance.initialize();
+  runApp(const SchoolApp());
+}
 
 class SchoolApp extends StatelessWidget {
   const SchoolApp({super.key});
@@ -68,34 +73,65 @@ class _SchoolHomeState extends State<SchoolHome> {
   }
 
   Future<void> _load() async {
-    final p = await SharedPreferences.getInstance();
+    final db = DatabaseHelper.instance;
+    final legacy = await SharedPreferences.getInstance();
     try {
-      levels = List<String>.from(jsonDecode(p.getString('levels') ?? '["Niveau 1"]'));
-      groups = List<String>.from(jsonDecode(p.getString('groups') ?? '["Groupe A"]'));
-      students = (jsonDecode(p.getString('students') ?? '[]') as List).map((e) => Student.fromJson(e)).toList();
-      assessments = (jsonDecode(p.getString('assessments') ?? '[]') as List).map((e) => Assessment.fromJson(e)).toList();
-      attendance = (jsonDecode(p.getString('attendance') ?? '[]') as List).map((e) => AttendanceRecord.fromJson(e)).toList();
-      grades = (jsonDecode(p.getString('grades') ?? '[]') as List).map((e) => GradeRecord.fromJson(e)).toList();
-      questionBank = (jsonDecode(p.getString('questions') ?? '[]') as List).map((e) => ExamQuestion(
-        e['prompt'] ?? '', e['category'] ?? 'QCU',
-        List<String>.from(e['choices'] ?? []), e['answer'] ?? '',
-        (e['points'] as num?)?.toDouble() ?? 1,
-      )).toList();
-      remarks.addAll(Map<String, String>.from(jsonDecode(p.getString('remarks') ?? '{}')));
-    } catch (_) {}
+      // Migration unique: si SQLite est encore vide, récupère les anciennes données
+      // SharedPreferences avant de basculer vers SQLite.
+      if (await db.isEmpty()) {
+        final oldKeys = <String>[
+          'levels', 'groups', 'students', 'assessments', 'attendance',
+          'grades', 'questions', 'remarks'
+        ];
+        final migration = <String, String>{};
+        for (final key in oldKeys) {
+          final value = legacy.getString(key);
+          if (value != null) migration[key] = value;
+        }
+        if (migration.isNotEmpty) await db.setMany(migration);
+      }
+
+      final stored = await db.getAll();
+      String value(String key, String fallback) => stored[key] ?? fallback;
+
+      levels = List<String>.from(jsonDecode(value('levels', '["Niveau 1"]')));
+      groups = List<String>.from(jsonDecode(value('groups', '["Groupe A"]')));
+      students = (jsonDecode(value('students', '[]')) as List)
+          .map((e) => Student.fromJson(Map<String, dynamic>.from(e))).toList();
+      assessments = (jsonDecode(value('assessments', '[]')) as List)
+          .map((e) => Assessment.fromJson(Map<String, dynamic>.from(e))).toList();
+      attendance = (jsonDecode(value('attendance', '[]')) as List)
+          .map((e) => AttendanceRecord.fromJson(Map<String, dynamic>.from(e))).toList();
+      grades = (jsonDecode(value('grades', '[]')) as List)
+          .map((e) => GradeRecord.fromJson(Map<String, dynamic>.from(e))).toList();
+      questionBank = (jsonDecode(value('questions', '[]')) as List).map((e) {
+        final j = Map<String, dynamic>.from(e);
+        return ExamQuestion(
+          j['prompt'] ?? '', j['category'] ?? 'QCU',
+          List<String>.from(j['choices'] ?? []), j['answer'] ?? '',
+          (j['points'] as num?)?.toDouble() ?? 1,
+        );
+      }).toList();
+      remarks.addAll(Map<String, String>.from(jsonDecode(value('remarks', '{}'))));
+    } catch (e) {
+      // Pa kite erè done yo bloke ouvèti aplikasyon an; done ki te li yo konsève.
+      debugPrint('Erreur de chargement SQLite: $e');
+    }
     if (mounted) setState(() => loading = false);
   }
 
   Future<void> _save() async {
-    final p = await SharedPreferences.getInstance();
-    await p.setString('levels', jsonEncode(levels));
-    await p.setString('groups', jsonEncode(groups));
-    await p.setString('students', jsonEncode(students.map((e) => e.toJson()).toList()));
-    await p.setString('assessments', jsonEncode(assessments.map((e) => e.toJson()).toList()));
-    await p.setString('attendance', jsonEncode(attendance.map((e) => e.toJson()).toList()));
-    await p.setString('grades', jsonEncode(grades.map((e) => e.toJson()).toList()));
-    await p.setString('questions', jsonEncode(questionBank.map((e) => e.toJson()).toList()));
-    await p.setString('remarks', jsonEncode(remarks));
+    final db = DatabaseHelper.instance;
+    await db.setMany({
+      'levels': jsonEncode(levels),
+      'groups': jsonEncode(groups),
+      'students': jsonEncode(students.map((e) => e.toJson()).toList()),
+      'assessments': jsonEncode(assessments.map((e) => e.toJson()).toList()),
+      'attendance': jsonEncode(attendance.map((e) => e.toJson()).toList()),
+      'grades': jsonEncode(grades.map((e) => e.toJson()).toList()),
+      'questions': jsonEncode(questionBank.map((e) => e.toJson()).toList()),
+      'remarks': jsonEncode(remarks),
+    });
   }
 
   String _id() => DateTime.now().microsecondsSinceEpoch.toString();
