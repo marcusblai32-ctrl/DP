@@ -3,9 +3,7 @@ name: Build DP Android + Windows
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -14,7 +12,6 @@ jobs:
   android:
     name: Build Android APK
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -31,13 +28,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Verify Android icon configuration
+      - name: Verify logo exists
         shell: bash
         run: |
-          test -f assets/dp_icon.png
-          test -f flutter_launcher_icons_android.yaml
+          test -f assets/dp_icon.png || { echo 'ERROR: assets/dp_icon.png not found in project root'; exit 1; }
 
-      - name: Generate Android launcher icon
+      - name: Generate Android launcher icon only
         run: dart run flutter_launcher_icons -f flutter_launcher_icons_android.yaml
 
       - name: Set Android app name to DP
@@ -46,79 +42,48 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
-
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
           if not manifest.exists():
-              raise SystemExit("AndroidManifest.xml not found")
-
-          content = manifest.read_text(encoding="utf-8")
-          content, count = re.subn(
-              r'android:label="[^"]*"',
-              'android:label="DP"',
-              content,
-              count=1
-          )
-
-          if count == 0:
-              content = content.replace(
-                  "<application",
-                  '<application android:label="DP"',
-                  1
-              )
-
-          manifest.write_text(content, encoding="utf-8")
-          print("Android app name set to DP")
+              raise SystemExit(f'ERROR: {manifest} not found')
+          text = manifest.read_text(encoding='utf-8')
+          if re.search(r'android:label="[^"]*"', text):
+              text = re.sub(r'android:label="[^"]*"', 'android:label="DP"', text, count=1)
+          else:
+              text = text.replace('<application', '<application android:label="DP"', 1)
+          manifest.write_text(text, encoding='utf-8')
+          print('Android display name set to DP')
           PY
 
-      - name: Set Android compile SDK to 36
+      - name: Set Android compile SDK to 36 for app and cached plugins
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          roots = [
-              Path("android"),
-              Path.home() / ".pub-cache" / "hosted"
+          roots = [Path('android'), Path.home() / '.pub-cache' / 'hosted']
+          patterns = [
+              re.compile(r'(?m)^(\s*compileSdk(?:Version)?\s*(?:=\s*)?)(?:flutter\.compileSdkVersion|\d+)(\s*(?://.*)?$)'),
+              re.compile(r'(?m)^(\s*compileSdk(?:Version)?\s*\(\s*)(?:flutter\.compileSdkVersion|\d+)(\s*\).*)$'),
           ]
-
-          pattern = re.compile(
-              r'(?m)^(\s*compileSdk(?:Version)?\s*(?:=\s*)?)'
-              r'(?:flutter\.compileSdkVersion|\d+)'
-              r'(\s*(?://.*)?$)'
-          )
-
           changed = []
-
           for root in roots:
               if not root.exists():
                   continue
-
-              for file in root.rglob("*"):
-                  if file.name not in (
-                      "build.gradle",
-                      "build.gradle.kts"
-                  ):
+              for file in root.rglob('*'):
+                  if file.name not in ('build.gradle', 'build.gradle.kts'):
                       continue
-
                   try:
-                      original = file.read_text(encoding="utf-8")
+                      original = file.read_text(encoding='utf-8')
                   except (OSError, UnicodeDecodeError):
                       continue
-
-                  updated, count = pattern.subn(
-                      lambda m: m.group(1) + "36" + m.group(2),
-                      original
-                  )
-
-                  if count and updated != original:
-                      file.write_text(updated, encoding="utf-8")
+                  updated = original
+                  for pattern in patterns:
+                      updated = pattern.sub(lambda m: m.group(1) + '36' + m.group(2), updated)
+                  if updated != original:
+                      file.write_text(updated, encoding='utf-8')
                       changed.append(str(file))
-
-          print("Gradle files updated:")
-          print("\n".join(changed) if changed else
-                "No matching declarations found")
+          print('Gradle files changed to compile SDK 36:')
+          print('\n'.join(changed) if changed else 'No matching compileSdk declarations found')
           PY
 
       - name: Analyze Dart code
@@ -138,7 +103,6 @@ jobs:
   windows:
     name: Build Windows application
     runs-on: windows-latest
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -155,19 +119,31 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Verify Windows icon configuration
+      - name: Verify logo exists
         shell: pwsh
         run: |
-          if (!(Test-Path "assets/dp_icon.png")) {
-            throw "Logo assets/dp_icon.png not found"
+          if (!(Test-Path 'assets/dp_icon.png')) {
+            Write-Error 'ERROR: assets/dp_icon.png not found in project root'
+            exit 1
           }
 
-          if (!(Test-Path "flutter_launcher_icons_windows.yaml")) {
-            throw "Windows icon configuration not found"
-          }
-
-      - name: Generate Windows launcher icon
+      - name: Generate Windows launcher icon only
         run: dart run flutter_launcher_icons -f flutter_launcher_icons_windows.yaml
+
+      - name: Set Windows app window title to DP
+        shell: pwsh
+        run: |
+          $runnerFiles = @('windows/runner/main.cpp', 'windows/runner/flutter_window.cpp')
+          foreach ($file in $runnerFiles) {
+            if (Test-Path $file) {
+              $content = Get-Content $file -Raw
+              $updated = $content -replace 'L"DP Scolaire"', 'L"DP"' -replace 'L"dp_scolaire"', 'L"DP"' -replace '"DP Scolaire"', '"DP"'
+              if ($updated -ne $content) {
+                Set-Content -Path $file -Value $updated -NoNewline
+                Write-Host "Updated window title in $file"
+              }
+            }
+          }
 
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
@@ -177,11 +153,7 @@ jobs:
 
       - name: Archive Windows release files
         shell: pwsh
-        run: |
-          Compress-Archive `
-            -Path build/windows/x64/runner/Release/* `
-            -DestinationPath DP-Windows-Release.zip `
-            -Force
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath DP-Windows-Release.zip -Force
 
       - name: Upload Windows application
         uses: actions/upload-artifact@v4
