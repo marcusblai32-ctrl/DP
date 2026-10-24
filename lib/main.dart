@@ -958,13 +958,16 @@ class _SchoolHomeState extends State<SchoolHome> {
       inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder(), focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: _red))),
       filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(backgroundColor: _red, foregroundColor: Colors.white, minimumSize: const Size(44, 44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
     ), child: Scaffold(
-      appBar: AppBar(title: const Text('DP', style: TextStyle(fontWeight: FontWeight.w800)), actions: [
+      appBar: AppBar(title: Row(mainAxisSize: MainAxisSize.min, children: [
+        ClipRRect(borderRadius: BorderRadius.circular(9), child: Image.asset('assets/dp_icon.png', width: 38, height: 38, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.school, color: _red, size: 30))),
+        const SizedBox(width: 10), const Text('DP Scolaire', style: TextStyle(fontWeight: FontWeight.w800)),
+      ]), actions: [
         IconButton(tooltip: 'Rappels', onPressed: () => setState(() => tab = 7), icon: Badge(label: Text('${reminders.where((r) => r['done'] != true).length}'), child: const Icon(Icons.notifications_active_outlined))),
         IconButton(tooltip: 'Importer une sauvegarde', onPressed: _importBackup, icon: const Icon(Icons.file_open)),
         IconButton(tooltip: 'Exporter et partager une sauvegarde', onPressed: _exportBackup, icon: const Icon(Icons.share)),
         if (!wide) PopupMenuButton<int>(tooltip: 'Autres fonctions', onSelected: (v) => setState(() => tab = v), itemBuilder: (_) => const [PopupMenuItem(value: 2, child: Text('Classes et groupes')), PopupMenuItem(value: 3, child: Text('Présences')), PopupMenuItem(value: 4, child: Text('Évaluations et notes')), PopupMenuItem(value: 5, child: Text('Examens')), PopupMenuItem(value: 6, child: Text('Rapports et classement')), PopupMenuItem(value: 7, child: Text('Calendrier des cours')), PopupMenuItem(value: 8, child: Text('Préparation des cours'))]),
       ]),
-      drawer: wide ? null : Drawer(backgroundColor: _panel, child: SafeArea(child: ListView(padding: const EdgeInsets.all(12), children: [const ListTile(leading: Icon(Icons.school, color: _red, size: 32), title: Text('DP Scolaire', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)), subtitle: Text('Apprendre · Progresser · Réussir')), const Divider(),
+      drawer: wide ? null : Drawer(backgroundColor: _panel, child: SafeArea(child: ListView(padding: const EdgeInsets.all(12), children: [ListTile(leading: ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.asset('assets/dp_icon.png', width: 46, height: 46, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.school, color: _red, size: 32))), title: const Text('DP Scolaire', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)), subtitle: const Text('Apprendre · Progresser · Réussir')), const Divider(),
         for (final item in const [(0,'Accueil',Icons.dashboard),(1,'Élèves',Icons.people),(2,'Niveaux et groupes',Icons.school),(3,'Présences',Icons.fact_check),(4,'Évaluations et notes',Icons.grade),(5,'Examens',Icons.quiz),(6,'Rapports et classement',Icons.emoji_events),(8,'Préparation des cours',Icons.menu_book)]) ListTile(leading: Icon(item.$3, color: tab == item.$1 ? _red : _muted), title: Text(item.$2), selected: tab == item.$1, onTap: () { Navigator.pop(context); setState(() => tab = item.$1); }),
       ]))),
       body: Row(children: [
