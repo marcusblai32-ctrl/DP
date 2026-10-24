@@ -943,13 +943,13 @@ class _SchoolHomeState extends State<SchoolHome> {
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 850;
     final navItems = const [
-      NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Akèy'),
-      NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'Elèv'),
-      NavigationDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: 'Kalandriye'),
-      NavigationDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: 'Preparasyon'),
-      NavigationDestination(icon: Icon(Icons.emoji_events_outlined), selectedIcon: Icon(Icons.emoji_events), label: 'Klasman'),
+      NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Accueil'),
+      NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'Élèves'),
+      NavigationDestination(icon: Icon(Icons.school_outlined), selectedIcon: Icon(Icons.school), label: 'Classes'),
+      NavigationDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: 'Préparation'),
+      NavigationDestination(icon: Icon(Icons.emoji_events_outlined), selectedIcon: Icon(Icons.emoji_events), label: 'Classement'),
     ];
-    final selectedNav = switch (tab) { 0 => 0, 1 => 1, 7 => 2, 8 => 3, 6 => 4, _ => 0 };
+    final selectedNav = switch (tab) { 0 => 0, 1 => 1, 2 => 2, 8 => 3, 6 => 4, _ => 0 };
     return Theme(data: ThemeData.dark(useMaterial3: true).copyWith(
       scaffoldBackgroundColor: _ink,
       colorScheme: const ColorScheme.dark(primary: _red, secondary: Color(0xFFFF6575), surface: _panel),
@@ -962,27 +962,27 @@ class _SchoolHomeState extends State<SchoolHome> {
         IconButton(tooltip: 'Rappels', onPressed: () => setState(() => tab = 7), icon: Badge(label: Text('${reminders.where((r) => r['done'] != true).length}'), child: const Icon(Icons.notifications_active_outlined))),
         IconButton(tooltip: 'Importer une sauvegarde', onPressed: _importBackup, icon: const Icon(Icons.file_open)),
         IconButton(tooltip: 'Exporter et partager une sauvegarde', onPressed: _exportBackup, icon: const Icon(Icons.share)),
-        if (!wide) PopupMenuButton<int>(onSelected: (v) => setState(() => tab = v), itemBuilder: (_) => const [PopupMenuItem(value: 2, child: Text('Niveaux et groupes')), PopupMenuItem(value: 3, child: Text('Présences')), PopupMenuItem(value: 4, child: Text('Évaluations et notes')), PopupMenuItem(value: 5, child: Text('Examens')), PopupMenuItem(value: 6, child: Text('Rapports et palmarès'))]),
+        if (!wide) PopupMenuButton<int>(tooltip: 'Autres fonctions', onSelected: (v) => setState(() => tab = v), itemBuilder: (_) => const [PopupMenuItem(value: 2, child: Text('Classes et groupes')), PopupMenuItem(value: 3, child: Text('Présences')), PopupMenuItem(value: 4, child: Text('Évaluations et notes')), PopupMenuItem(value: 5, child: Text('Examens')), PopupMenuItem(value: 6, child: Text('Rapports et classement')), PopupMenuItem(value: 7, child: Text('Calendrier des cours')), PopupMenuItem(value: 8, child: Text('Préparation des cours'))]),
       ]),
-      drawer: wide ? null : Drawer(backgroundColor: _panel, child: SafeArea(child: ListView(padding: const EdgeInsets.all(12), children: [const ListTile(leading: Icon(Icons.school, color: _red, size: 32), title: Text('DP Scolaire', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)), subtitle: Text('Jere · Swiv · Reyisi')), const Divider(),
-        for (final item in const [(0,'Akèy',Icons.dashboard),(1,'Élèves',Icons.people),(2,'Niveaux et groupes',Icons.school),(3,'Présences',Icons.fact_check),(4,'Évaluations et notes',Icons.grade),(5,'Examens',Icons.quiz),(6,'Rapports et classement',Icons.emoji_events),(7,'Kalandriye des cours',Icons.calendar_month),(8,'Préparation des cours',Icons.menu_book)]) ListTile(leading: Icon(item.$3, color: tab == item.$1 ? _red : _muted), title: Text(item.$2), selected: tab == item.$1, onTap: () { Navigator.pop(context); setState(() => tab = item.$1); }),
+      drawer: wide ? null : Drawer(backgroundColor: _panel, child: SafeArea(child: ListView(padding: const EdgeInsets.all(12), children: [const ListTile(leading: Icon(Icons.school, color: _red, size: 32), title: Text('DP Scolaire', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)), subtitle: Text('Apprendre · Progresser · Réussir')), const Divider(),
+        for (final item in const [(0,'Accueil',Icons.dashboard),(1,'Élèves',Icons.people),(2,'Niveaux et groupes',Icons.school),(3,'Présences',Icons.fact_check),(4,'Évaluations et notes',Icons.grade),(5,'Examens',Icons.quiz),(6,'Rapports et classement',Icons.emoji_events),(8,'Préparation des cours',Icons.menu_book)]) ListTile(leading: Icon(item.$3, color: tab == item.$1 ? _red : _muted), title: Text(item.$2), selected: tab == item.$1, onTap: () { Navigator.pop(context); setState(() => tab = item.$1); }),
       ]))),
       body: Row(children: [
         if (wide) NavigationRail(backgroundColor: _panel, selectedIndex: tab, labelType: NavigationRailLabelType.all, onDestinationSelected: (i) => setState(() => tab = i), destinations: const [
-          NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Akèy')),
+          NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Accueil')),
           NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Élèves')),
           NavigationRailDestination(icon: Icon(Icons.school_outlined), selectedIcon: Icon(Icons.school), label: Text('Niveaux')),
           NavigationRailDestination(icon: Icon(Icons.fact_check_outlined), selectedIcon: Icon(Icons.fact_check), label: Text('Présences')),
           NavigationRailDestination(icon: Icon(Icons.grade_outlined), selectedIcon: Icon(Icons.grade), label: Text('Notes')),
           NavigationRailDestination(icon: Icon(Icons.quiz_outlined), selectedIcon: Icon(Icons.quiz), label: Text('Examens')),
           NavigationRailDestination(icon: Icon(Icons.assessment_outlined), selectedIcon: Icon(Icons.assessment), label: Text('Rapports')),
-          NavigationRailDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: Text('Cours')),
+          NavigationRailDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: Text('Calendrier')),
           NavigationRailDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: Text('Préparation')),
         ]),
         if (wide) const VerticalDivider(width: 1, color: Color(0xFF30333D)),
         Expanded(child: _page()),
       ]),
-      bottomNavigationBar: wide ? null : NavigationBar(backgroundColor: _panel, indicatorColor: _red.withOpacity(.18), selectedIndex: selectedNav, onDestinationSelected: (i) => setState(() => tab = [0,1,7,8,6][i]), destinations: navItems),
+      bottomNavigationBar: wide ? null : NavigationBar(backgroundColor: _panel, indicatorColor: _red.withOpacity(.18), selectedIndex: selectedNav, onDestinationSelected: (i) => setState(() => tab = [0,1,2,8,6][i]), destinations: navItems),
     ));
   }
 
