@@ -583,7 +583,7 @@ class _SchoolHomeState extends State<SchoolHome> {
   Widget _dashboard() => ListView(padding: const EdgeInsets.all(16), children: [
     Container(padding: const EdgeInsets.all(18), decoration: BoxDecoration(color: _panel, borderRadius: BorderRadius.circular(22), border: Border.all(color: _red.withOpacity(.45))), child: Row(children: [
       Container(width: 48, height: 48, decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(16)), child: const Icon(Icons.school, color: Colors.white, size: 28)),
-      const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Bon retour !', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)), Text('DP Scolaire · ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}', style: const TextStyle(color: _muted))]),),
+      const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Bon retour !', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)), Text('DP · ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}', style: const TextStyle(color: _muted))]),),
       IconButton(onPressed: () => setState(() => tab = 7), tooltip: 'Calendrier des cours', icon: const Icon(Icons.notifications_active_outlined, color: _red)),
     ])),
     const SizedBox(height: 16),
@@ -595,7 +595,6 @@ class _SchoolHomeState extends State<SchoolHome> {
     LayoutBuilder(builder: (context, box) { final count = box.maxWidth < 360 ? 1 : 2; final width = (box.maxWidth - 10 * (count - 1)) / count; return Wrap(spacing: 10, runSpacing: 10, children: [
       _actionTile('Ajouter un élève', Icons.person_add_alt_1, _addStudent, width),
       _actionTile('Faire l’appel', Icons.fact_check_outlined, () => setState(() => tab = 3), width),
-      _actionTile('Préparer un cours', Icons.menu_book_outlined, () => setState(() => tab = 8), width),
       _actionTile('Planifier un cours', Icons.calendar_month, () => _addCourseSession(), width),
       _actionTile('Créer une évaluation', Icons.assignment_outlined, () => _addAssessment(), width),
       _actionTile('Sauvegarder', Icons.backup_outlined, _exportBackup, width),
@@ -616,7 +615,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     if (courseSessions.isEmpty) _darkCard(child: const Text('Aucun cours planifié. Ajoutez une séance dans le calendrier.', style: TextStyle(color: _muted)))
     else ..._upcomingSessions().take(3).map((e) => _darkCard(child: ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.event, color: _red), title: Text(e['title'] ?? 'Cours'), subtitle: Text('${e['date'] ?? ''} · ${e['time'] ?? ''}\n${e['place'] ?? 'Lieu à préciser'}', style: const TextStyle(color: _muted)), isThreeLine: true))),
     const SizedBox(height: 12),
-    _darkCard(child: Row(children: [const Icon(Icons.notifications, color: _red), const SizedBox(width: 10), Expanded(child: Text('${reminders.length} rappel(s) enregistré(s) · ${coursePreparations.length} préparation(s) de cours', style: const TextStyle(color: _muted)))])),
+    _darkCard(child: Row(children: [const Icon(Icons.notifications, color: _red), const SizedBox(width: 10), Expanded(child: Text('${reminders.length} rappel(s) enregistré(s)', style: const TextStyle(color: _muted)))])),
   ]);
 
   Widget _sectionHeader(String title, IconData icon) => Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [Icon(icon, color: _red), const SizedBox(width: 8), Expanded(child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)))]));
@@ -939,17 +938,48 @@ class _SchoolHomeState extends State<SchoolHome> {
     }),
   ]);
 
+  Widget _bottomItem(String label, IconData icon, bool selected, VoidCallback onTap) => Expanded(
+    child: InkWell(onTap: onTap, child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(icon, color: selected ? _red : _muted, size: 24),
+        const SizedBox(height: 4),
+        Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: selected ? _red : _muted, fontSize: 11, fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
+      ]),
+    )),
+  );
+
+  Future<void> _showQuickAdd() async {
+    await showModalBottomSheet<void>(context: context, backgroundColor: _panel, isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SafeArea(child: Padding(padding: const EdgeInsets.fromLTRB(20, 18, 20, 24), child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [const Expanded(child: Text('Ajouter', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800))), IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close))]),
+        const SizedBox(height: 12),
+        GridView.count(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), crossAxisCount: 3, mainAxisSpacing: 14, crossAxisSpacing: 10, childAspectRatio: .95, children: [
+          _quickAddItem(ctx, 'Nouvel élève', Icons.people_alt, _addStudent),
+          _quickAddItem(ctx, 'Nouvelle classe', Icons.menu_book, () => setState(() => tab = 2)),
+          _quickAddItem(ctx, 'Nouvelle matière', Icons.auto_stories, () => setState(() => tab = 4)),
+          _quickAddItem(ctx, 'Nouvelle évaluation', Icons.assignment, _addAssessment),
+          _quickAddItem(ctx, 'Nouvel examen', Icons.quiz, _addQuestion),
+          _quickAddItem(ctx, 'Rappel', Icons.notifications_active, () => setState(() => tab = 7)),
+        ]),
+      ]))),
+    );
+  }
+
+  Widget _quickAddItem(BuildContext ctx, String label, IconData icon, VoidCallback action) => InkWell(
+    borderRadius: BorderRadius.circular(14), onTap: () { Navigator.pop(ctx); action(); },
+    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Container(width: 52, height: 52, decoration: BoxDecoration(color: _ink, borderRadius: BorderRadius.circular(16), border: Border.all(color: _red.withOpacity(.45))), child: Icon(icon, color: _red, size: 26)),
+      const SizedBox(height: 7), Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+    ]),
+  );
+
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 850;
-    final navItems = const [
-      NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Accueil'),
-      NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'Élèves'),
-      NavigationDestination(icon: Icon(Icons.school_outlined), selectedIcon: Icon(Icons.school), label: 'Classes'),
-      NavigationDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: 'Préparation'),
-      NavigationDestination(icon: Icon(Icons.emoji_events_outlined), selectedIcon: Icon(Icons.emoji_events), label: 'Classement'),
-    ];
-    final selectedNav = switch (tab) { 0 => 0, 1 => 1, 2 => 2, 8 => 3, 6 => 4, _ => 0 };
+    final selectedNav = switch (tab) { 0 => 0, 1 => 1, 2 => 3, 6 => 4, _ => 0 };
     return Theme(data: ThemeData.dark(useMaterial3: true).copyWith(
       scaffoldBackgroundColor: _ink,
       colorScheme: const ColorScheme.dark(primary: _red, secondary: Color(0xFFFF6575), surface: _panel),
@@ -960,15 +990,15 @@ class _SchoolHomeState extends State<SchoolHome> {
     ), child: Scaffold(
       appBar: AppBar(title: Row(mainAxisSize: MainAxisSize.min, children: [
         ClipRRect(borderRadius: BorderRadius.circular(9), child: Image.asset('assets/dp_icon.png', width: 38, height: 38, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.school, color: _red, size: 30))),
-        const SizedBox(width: 10), const Text('DP Scolaire', style: TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(width: 10), const Text('DP', style: TextStyle(fontWeight: FontWeight.w800)),
       ]), actions: [
         IconButton(tooltip: 'Rappels', onPressed: () => setState(() => tab = 7), icon: Badge(label: Text('${reminders.where((r) => r['done'] != true).length}'), child: const Icon(Icons.notifications_active_outlined))),
         IconButton(tooltip: 'Importer une sauvegarde', onPressed: _importBackup, icon: const Icon(Icons.file_open)),
         IconButton(tooltip: 'Exporter et partager une sauvegarde', onPressed: _exportBackup, icon: const Icon(Icons.share)),
-        if (!wide) PopupMenuButton<int>(tooltip: 'Autres fonctions', onSelected: (v) => setState(() => tab = v), itemBuilder: (_) => const [PopupMenuItem(value: 2, child: Text('Classes et groupes')), PopupMenuItem(value: 3, child: Text('Présences')), PopupMenuItem(value: 4, child: Text('Évaluations et notes')), PopupMenuItem(value: 5, child: Text('Examens')), PopupMenuItem(value: 6, child: Text('Rapports et classement')), PopupMenuItem(value: 7, child: Text('Calendrier des cours')), PopupMenuItem(value: 8, child: Text('Préparation des cours'))]),
+        if (!wide) PopupMenuButton<int>(tooltip: 'Autres fonctions', onSelected: (v) => setState(() => tab = v), itemBuilder: (_) => const [PopupMenuItem(value: 2, child: Text('Classes et groupes')), PopupMenuItem(value: 3, child: Text('Présences')), PopupMenuItem(value: 4, child: Text('Évaluations et notes')), PopupMenuItem(value: 5, child: Text('Examens')), PopupMenuItem(value: 6, child: Text('Rapports et classement')), PopupMenuItem(value: 7, child: Text('Calendrier des cours'))]),
       ]),
-      drawer: wide ? null : Drawer(backgroundColor: _panel, child: SafeArea(child: ListView(padding: const EdgeInsets.all(12), children: [ListTile(leading: ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.asset('assets/dp_icon.png', width: 46, height: 46, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.school, color: _red, size: 32))), title: const Text('DP Scolaire', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)), subtitle: const Text('Apprendre · Progresser · Réussir')), const Divider(),
-        for (final item in const [(0,'Accueil',Icons.dashboard),(1,'Élèves',Icons.people),(2,'Niveaux et groupes',Icons.school),(3,'Présences',Icons.fact_check),(4,'Évaluations et notes',Icons.grade),(5,'Examens',Icons.quiz),(6,'Rapports et classement',Icons.emoji_events),(8,'Préparation des cours',Icons.menu_book)]) ListTile(leading: Icon(item.$3, color: tab == item.$1 ? _red : _muted), title: Text(item.$2), selected: tab == item.$1, onTap: () { Navigator.pop(context); setState(() => tab = item.$1); }),
+      drawer: wide ? null : Drawer(backgroundColor: _panel, child: SafeArea(child: ListView(padding: const EdgeInsets.all(12), children: [ListTile(leading: ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.asset('assets/dp_icon.png', width: 46, height: 46, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.school, color: _red, size: 32))), title: const Text('DP', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)), subtitle: const Text('Apprendre · Progresser · Réussir')), const Divider(),
+        for (final item in const [(0,'Accueil',Icons.dashboard),(1,'Élèves',Icons.people),(2,'Niveaux et groupes',Icons.school),(3,'Présences',Icons.fact_check),(4,'Évaluations et notes',Icons.grade),(5,'Examens',Icons.quiz),(6,'Rapports et classement',Icons.emoji_events)]) ListTile(leading: Icon(item.$3, color: tab == item.$1 ? _red : _muted), title: Text(item.$2), selected: tab == item.$1, onTap: () { Navigator.pop(context); setState(() => tab = item.$1); }),
       ]))),
       body: Row(children: [
         if (wide) NavigationRail(backgroundColor: _panel, selectedIndex: tab, labelType: NavigationRailLabelType.all, onDestinationSelected: (i) => setState(() => tab = i), destinations: const [
@@ -980,12 +1010,27 @@ class _SchoolHomeState extends State<SchoolHome> {
           NavigationRailDestination(icon: Icon(Icons.quiz_outlined), selectedIcon: Icon(Icons.quiz), label: Text('Examens')),
           NavigationRailDestination(icon: Icon(Icons.assessment_outlined), selectedIcon: Icon(Icons.assessment), label: Text('Rapports')),
           NavigationRailDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: Text('Calendrier')),
-          NavigationRailDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: Text('Préparation')),
         ]),
         if (wide) const VerticalDivider(width: 1, color: Color(0xFF30333D)),
         Expanded(child: _page()),
       ]),
-      bottomNavigationBar: wide ? null : NavigationBar(backgroundColor: _panel, indicatorColor: _red.withOpacity(.18), selectedIndex: selectedNav, onDestinationSelected: (i) => setState(() => tab = [0,1,2,8,6][i]), destinations: navItems),
+      bottomNavigationBar: wide ? null : SafeArea(
+        top: false,
+        child: Container(
+          height: 76,
+          decoration: const BoxDecoration(color: _panel, border: Border(top: BorderSide(color: Color(0xFF30333D)))),
+          child: Row(children: [
+            _bottomItem('Accueil', Icons.home_rounded, tab == 0, () => setState(() => tab = 0)),
+            _bottomItem('Élèves', Icons.people_alt_outlined, tab == 1, () => setState(() => tab = 1)),
+            Expanded(child: Center(child: SizedBox(width: 58, height: 58, child: FloatingActionButton(
+              heroTag: 'dp_center_add', onPressed: _showQuickAdd, backgroundColor: _red, foregroundColor: Colors.white,
+              elevation: 4, shape: const CircleBorder(), child: const Icon(Icons.add, size: 34),
+            )))),
+            _bottomItem('Classes', Icons.menu_book_outlined, tab == 2, () => setState(() => tab = 2)),
+            _bottomItem('Matières', Icons.auto_stories_outlined, tab == 4, () => setState(() => tab = 4)),
+          ]),
+        ),
+      ),
     ));
   }
 
