@@ -1,4 +1,4 @@
-DP Scolaire — patch dashboard Android noir/rouge
+DP — patch dashboard Android noir/rouge
 
 Fichiers à remplacer/ajouter à la racine du dépôt GitHub :
 - lib/main.dart (remplacer)

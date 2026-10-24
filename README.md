@@ -1,6 +1,6 @@
-# DP Scolaire — projet Flutter complet
+# DP — projet Flutter complet
 
-Application Flutter/Dart de gestion scolaire locale, conçue pour Android et Windows. L'interface et les documents portent le nom **DP Scolaire**.
+Application Flutter/Dart de gestion scolaire locale, conçue pour Android et Windows. L'interface et les documents portent le nom **DP**.
 
 ## Fonctions déjà présentes dans cette version
 - Gestion des élèves, niveaux et groupes dynamiques.
