@@ -155,10 +155,18 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath DP-Windows-Release.zip -Force
 
-      - name: Upload Windows application
+      - name: Upload Windows ZIP (EXE + required DLLs and assets)
         uses: actions/upload-artifact@v4
         with:
-          name: DP-Windows-Release
+          name: DP-Windows-ZIP
           path: DP-Windows-Release.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Windows EXE separately
+        uses: actions/upload-artifact@v4
+        with:
+          name: DP-Windows-EXE
+          path: build/windows/x64/runner/Release/*.exe
           if-no-files-found: error
           retention-days: 14
