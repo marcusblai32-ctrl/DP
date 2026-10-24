@@ -42,8 +42,6 @@ class SchoolHome extends StatefulWidget {
 
 class _SchoolHomeState extends State<SchoolHome> {
   int tab = 0;
-  bool navigationExpanded = false;
-  final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
   bool loading = true;
   List<String> levels = ['Niveau 1'];
   List<String> groups = ['Groupe A'];
@@ -52,6 +50,13 @@ class _SchoolHomeState extends State<SchoolHome> {
   List<AttendanceRecord> attendance = [];
   List<GradeRecord> grades = [];
   List<ExamQuestion> questionBank = [];
+  List<Map<String, dynamic>> courseSessions = [];
+  List<Map<String, dynamic>> coursePreparations = [];
+  List<Map<String, dynamic>> reminders = [];
+  static const Color _ink = Color(0xFF090A0D);
+  static const Color _panel = Color(0xFF15171D);
+  static const Color _red = Color(0xFFE51C35);
+  static const Color _muted = Color(0xFFADB3C2);
   final remarks = <String, String>{
     'excellent': 'Excellent travail. Continuez vos efforts.',
     'good': 'Bon travail. Poursuivez vos efforts.',
@@ -85,6 +90,9 @@ class _SchoolHomeState extends State<SchoolHome> {
         (e['points'] as num?)?.toDouble() ?? 1,
       )).toList();
       remarks.addAll(Map<String, String>.from(jsonDecode(p.getString('remarks') ?? '{}')));
+      courseSessions = List<Map<String, dynamic>>.from((jsonDecode(p.getString('courseSessions') ?? '[]') as List).map((e) => Map<String, dynamic>.from(e)));
+      coursePreparations = List<Map<String, dynamic>>.from((jsonDecode(p.getString('coursePreparations') ?? '[]') as List).map((e) => Map<String, dynamic>.from(e)));
+      reminders = List<Map<String, dynamic>>.from((jsonDecode(p.getString('reminders') ?? '[]') as List).map((e) => Map<String, dynamic>.from(e)));
     } catch (_) {}
     if (mounted) setState(() => loading = false);
   }
@@ -99,6 +107,9 @@ class _SchoolHomeState extends State<SchoolHome> {
     await p.setString('grades', jsonEncode(grades.map((e) => e.toJson()).toList()));
     await p.setString('questions', jsonEncode(questionBank.map((e) => e.toJson()).toList()));
     await p.setString('remarks', jsonEncode(remarks));
+    await p.setString('courseSessions', jsonEncode(courseSessions));
+    await p.setString('coursePreparations', jsonEncode(coursePreparations));
+    await p.setString('reminders', jsonEncode(reminders));
   }
 
   String _id() => DateTime.now().microsecondsSinceEpoch.toString();
@@ -348,7 +359,7 @@ class _SchoolHomeState extends State<SchoolHome> {
       builder: (ctx) => AlertDialog(
         title: const Text('Effacer l’historique'),
         content: const Text(
-          'Cette action effacera les présences, les notes, les évaluations et la banque de questions. '
+          'Cette action effacera les présences, les notes, les évaluations, les questions, les séances, les rappels et les préparations. '
           'Les élèves, niveaux et groupes seront conservés. Exportez une sauvegarde avant de continuer.',
         ),
         actions: [
@@ -367,6 +378,9 @@ class _SchoolHomeState extends State<SchoolHome> {
       grades.clear();
       assessments.clear();
       questionBank.clear();
+      courseSessions.clear();
+      coursePreparations.clear();
+      reminders.clear();
     });
     await _save();
     if (mounted) _msg('Historique effacé. Les élèves, niveaux et groupes sont conservés.');
@@ -401,6 +415,9 @@ class _SchoolHomeState extends State<SchoolHome> {
       'grades': grades.map((e) => e.toJson()).toList(),
       'questions': questionBank.map((e) => e.toJson()).toList(),
       'remarks': remarks,
+      'courseSessions': courseSessions,
+      'coursePreparations': coursePreparations,
+      'reminders': reminders,
     };
     final bytes = utf8.encode(const JsonEncoder.withIndent('  ').convert(data));
     final result = await FilePicker.platform.saveFile(
@@ -478,6 +495,9 @@ class _SchoolHomeState extends State<SchoolHome> {
         return ExamQuestion(q['prompt'] ?? '', q['category'] ?? 'QCU', List<String>.from(q['choices'] ?? []), q['answer'] ?? '', (q['points'] as num?)?.toDouble() ?? 1);
       }).toList();
       remarks.addAll(Map<String, String>.from(data['remarks'] ?? {}));
+      courseSessions = ((data['courseSessions'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      coursePreparations = ((data['coursePreparations'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      reminders = ((data['reminders'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
       await _save();
       if (mounted) {
         setState(() {});
@@ -549,38 +569,265 @@ class _SchoolHomeState extends State<SchoolHome> {
         return _assessmentsPage();
       case 5:
         return _examsPage();
-      default:
+      case 6:
         return _reportsPage();
+      case 7:
+        return _courseCalendarPage();
+      case 8:
+        return _coursePreparationPage();
+      default:
+        return _dashboard();
     }
   }
 
-  Widget _dashboard() => ListView(padding: const EdgeInsets.all(24), children: [
-    const Text('Tableau de bord', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+  Widget _dashboard() => ListView(padding: const EdgeInsets.all(16), children: [
+    Container(padding: const EdgeInsets.all(18), decoration: BoxDecoration(color: _panel, borderRadius: BorderRadius.circular(22), border: Border.all(color: _red.withOpacity(.45))), child: Row(children: [
+      Container(width: 48, height: 48, decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(16)), child: const Icon(Icons.school, color: Colors.white, size: 28)),
+      const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Bon retour !', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)), Text('DP Scolaire · ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}', style: const TextStyle(color: _muted))]),),
+      IconButton(onPressed: () => setState(() => tab = 7), tooltip: 'Calendrier des cours', icon: const Icon(Icons.notifications_active_outlined, color: _red)),
+    ])),
+    const SizedBox(height: 16),
+    LayoutBuilder(builder: (context, box) { final count = box.maxWidth < 360 ? 1 : (box.maxWidth < 650 ? 2 : 4); final width = (box.maxWidth - 12 * (count - 1)) / count; return Wrap(spacing: 12, runSpacing: 12, children: [
+      _metric('Élèves', '${students.length}', Icons.people_alt, width), _metric('Niveaux', '${levels.length}', Icons.school, width), _metric('Groupes', '${groups.length}', Icons.groups, width), _metric('Évaluations', '${assessments.length}', Icons.fact_check, width),
+    ]); }),
     const SizedBox(height: 20),
-    Wrap(spacing: 12, runSpacing: 12, children: [
-      _metric('Élèves', '${students.length}', Icons.people),
-      _metric('Niveaux', '${levels.length}', Icons.school),
-      _metric('Groupes', '${groups.length}', Icons.groups),
-      _metric('Évaluations', '${assessments.length}', Icons.fact_check),
-      _metric('Questions', '${questionBank.length}', Icons.quiz),
-    ]),
-    const SizedBox(height: 24),
-    const Text('Actions rapides', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-    const SizedBox(height: 10),
-    Wrap(spacing: 10, runSpacing: 10, children: [
-      FilledButton.icon(onPressed: _addStudent, icon: const Icon(Icons.person_add), label: const Text('Ajouter un élève')),
-      OutlinedButton.icon(onPressed: () => setState(() => tab = 3), icon: const Icon(Icons.fact_check), label: const Text('Faire l’appel')),
-      OutlinedButton.icon(onPressed: () => _addAssessment(category: 'Examen'), icon: const Icon(Icons.assignment), label: const Text('Créer un examen')),
-      OutlinedButton.icon(onPressed: _exportBackup, icon: const Icon(Icons.backup), label: const Text('Sauvegarder les données')),
-    ]),
-    const SizedBox(height: 24),
-    const Text('Classement actuel', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-    ...(_rankedStudents().take(5).map((e) => ListTile(
-      leading: CircleAvatar(child: Text('${e.$2}')),
-      title: Text(e.$1.name),
-      subtitle: Text('${e.$1.level} · ${e.$1.group}'),
-      trailing: Text('${_average(e.$1).toStringAsFixed(2)} /100'),
-    ))),
+    _sectionHeader('Actions rapides', Icons.bolt),
+    LayoutBuilder(builder: (context, box) { final count = box.maxWidth < 360 ? 1 : 2; final width = (box.maxWidth - 10 * (count - 1)) / count; return Wrap(spacing: 10, runSpacing: 10, children: [
+      _actionTile('Ajouter un élève', Icons.person_add_alt_1, _addStudent, width),
+      _actionTile('Faire l’appel', Icons.fact_check_outlined, () => setState(() => tab = 3), width),
+      _actionTile('Préparer un cours', Icons.menu_book_outlined, () => setState(() => tab = 8), width),
+      _actionTile('Planifier un cours', Icons.calendar_month, () => _addCourseSession(), width),
+      _actionTile('Créer une évaluation', Icons.assignment_outlined, () => _addAssessment(), width),
+      _actionTile('Sauvegarder', Icons.backup_outlined, _exportBackup, width),
+    ]); }),
+    const SizedBox(height: 20),
+    _sectionHeader('Moyennes des élèves · sur 100', Icons.show_chart),
+    _darkCard(child: SizedBox(height: 160, child: CustomPaint(painter: _TrendPainter(_rankedStudents().take(8).map((e) => _average(e.$1)).toList()), child: const SizedBox.expand()))),
+    const SizedBox(height: 20),
+    _sectionHeader('Classement par élève', Icons.emoji_events_outlined),
+    if (students.isEmpty) _darkCard(child: const Text('Ajoutez des élèves et saisissez leurs notes pour générer le classement.', style: TextStyle(color: _muted)))
+    else ..._rankedStudents().take(10).map((e) { final rank=e.$2; final avg=_average(e.$1); return _darkCard(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), child: Row(children: [
+      Container(width: 34, height: 34, alignment: Alignment.center, decoration: BoxDecoration(color: rank <= 3 ? _red : const Color(0xFF292C34), borderRadius: BorderRadius.circular(12)), child: Text('$rank', style: const TextStyle(fontWeight: FontWeight.bold))),
+      const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(e.$1.name, style: const TextStyle(fontWeight: FontWeight.w700)), Text('${e.$1.level} · ${e.$1.group}', style: const TextStyle(color: _muted, fontSize: 12))])),
+      Text('${avg.toStringAsFixed(1)}%', style: const TextStyle(color: _red, fontWeight: FontWeight.w800)),
+    ])); }),
+    const SizedBox(height: 20),
+    _sectionHeader('Prochains cours et rappels', Icons.notifications_active_outlined),
+    if (courseSessions.isEmpty) _darkCard(child: const Text('Aucun cours planifié. Ajoutez une séance dans le calendrier.', style: TextStyle(color: _muted)))
+    else ..._upcomingSessions().take(3).map((e) => _darkCard(child: ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.event, color: _red), title: Text(e['title'] ?? 'Cours'), subtitle: Text('${e['date'] ?? ''} · ${e['time'] ?? ''}\n${e['place'] ?? 'Lieu à préciser'}', style: const TextStyle(color: _muted)), isThreeLine: true))),
+    const SizedBox(height: 12),
+    _darkCard(child: Row(children: [const Icon(Icons.notifications, color: _red), const SizedBox(width: 10), Expanded(child: Text('${reminders.length} rappel(s) enregistré(s) · ${coursePreparations.length} préparation(s) de cours', style: const TextStyle(color: _muted)))])),
+  ]);
+
+  Widget _sectionHeader(String title, IconData icon) => Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [Icon(icon, color: _red), const SizedBox(width: 8), Expanded(child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)))]));
+  Widget _darkCard({required Widget child, EdgeInsets padding = const EdgeInsets.all(14)}) => Container(width: double.infinity, margin: const EdgeInsets.only(bottom: 8), padding: padding, decoration: BoxDecoration(color: _panel, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFF30333D))), child: child);
+  Widget _actionTile(String title, IconData icon, VoidCallback onTap, double width) => SizedBox(width: width, height: 84, child: Material(color: _panel, borderRadius: BorderRadius.circular(16), child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(16), child: Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), border: Border.all(color: _red.withOpacity(.45))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: _red), const SizedBox(height: 7), Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13))])))));
+
+  Future<void> _addCourseSession() async {
+    final title = TextEditingController();
+    final place = TextEditingController();
+    final time = TextEditingController(text: '09:00');
+    final note = TextEditingController();
+    DateTime date = DateTime.now().add(const Duration(days: 1));
+    bool reminder = true;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          backgroundColor: _panel,
+          title: const Text('Planifier un cours'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(controller: title, decoration: const InputDecoration(labelText: 'Titre / matière')),
+                  const SizedBox(height: 8),
+                  TextField(controller: place, decoration: const InputDecoration(labelText: 'Salle / lieu')),
+                  const SizedBox(height: 8),
+                  TextField(controller: time, decoration: const InputDecoration(labelText: 'Heure (ex. 09:00)')),
+                  const SizedBox(height: 8),
+                  TextField(controller: note, maxLines: 2, decoration: const InputDecoration(labelText: 'Objectif ou note')),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('Date : ${date.day}/${date.month}/${date.year}'),
+                    trailing: const Icon(Icons.calendar_month, color: _red),
+                    onTap: () async {
+                      final selected = await showDatePicker(
+                        context: ctx,
+                        initialDate: date,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2100),
+                        builder: (c, child) => Theme(
+                          data: Theme.of(c).copyWith(colorScheme: const ColorScheme.dark(primary: _red, surface: _panel)),
+                          child: child!,
+                        ),
+                      );
+                      if (selected != null) setD(() => date = selected);
+                    },
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: reminder,
+                    activeColor: _red,
+                    onChanged: (value) => setD(() => reminder = value),
+                    title: const Text('Créer un rappel dans l’application'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            FilledButton(
+              onPressed: () async {
+                if (title.text.trim().isEmpty) return;
+                final dateText = '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+                final item = <String, dynamic>{
+                  'id': _id(), 'title': title.text.trim(), 'place': place.text.trim(),
+                  'time': time.text.trim(), 'note': note.text.trim(), 'date': dateText,
+                  'reminder': reminder, 'done': false,
+                };
+                setState(() {
+                  courseSessions.add(item);
+                  if (reminder) {
+                    reminders.add({'id': _id(), 'title': 'Rappel : ${item['title']}', 'date': dateText, 'time': time.text.trim(), 'done': false});
+                  }
+                });
+                await _save();
+                if (mounted) Navigator.pop(ctx);
+                _msg('Cours ajouté au calendrier.');
+              },
+              child: const Text('Enregistrer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _upcomingSessions() { final list = List<Map<String, dynamic>>.from(courseSessions); list.sort((a,b) => ('${a['date']} ${a['time']}').compareTo('${b['date']} ${b['time']}')); return list.where((e) => (e['date'] ?? '').toString().compareTo(DateTime.now().toIso8601String().substring(0,10)) >= 0).toList(); }
+
+  Widget _courseCalendarPage() => ListView(
+    padding: const EdgeInsets.all(16),
+    children: [
+      _sectionHeader('Calendrier des cours', Icons.calendar_month),
+      _darkCard(child: LayoutBuilder(builder: (context, box) => box.maxWidth < 420
+        ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Planifiez les séances et gardez le lieu, l’heure et les objectifs au même endroit.', style: TextStyle(color: _muted)),
+            const SizedBox(height: 10),
+            SizedBox(width: double.infinity, child: FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: _red), onPressed: _addCourseSession, icon: const Icon(Icons.add), label: const Text('Ajouter un cours'))),
+          ])
+        : Row(children: [
+            const Expanded(child: Text('Planifiez les séances et gardez le lieu, l’heure et les objectifs au même endroit.', style: TextStyle(color: _muted))),
+            const SizedBox(width: 12),
+            FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: _red), onPressed: _addCourseSession, icon: const Icon(Icons.add), label: const Text('Ajouter')),
+          ]))),
+      _sectionHeader('Séances planifiées', Icons.event_note),
+      if (courseSessions.isEmpty)
+        _darkCard(child: const Text('Aucune séance planifiée pour le moment.', style: TextStyle(color: _muted)))
+      else
+        ..._upcomingSessions().map((session) => _darkCard(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 48, height: 54,
+              decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(12)),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Text((session['date'] ?? '--').toString().split('-').last, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text('JOUR', style: TextStyle(fontSize: 9)),
+              ]),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(session['title'] ?? 'Cours', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text('${session['date']} · ${session['time']} · ${session['place']}', style: const TextStyle(color: _muted)),
+              if ((session['note'] ?? '').toString().isNotEmpty) Text(session['note'], style: const TextStyle(color: _muted)),
+              const SizedBox(height: 8),
+              Wrap(spacing: 4, runSpacing: 4, children: [
+                TextButton.icon(
+                  onPressed: () async { setState(() => session['done'] = !(session['done'] == true)); await _save(); },
+                  icon: Icon(session['done'] == true ? Icons.check_circle : Icons.radio_button_unchecked, color: _red),
+                  label: Text(session['done'] == true ? 'Terminé' : 'Marquer terminé'),
+                ),
+                IconButton(
+                  tooltip: 'Supprimer la séance',
+                  onPressed: () async { setState(() => courseSessions.removeWhere((x) => x['id'] == session['id'])); await _save(); },
+                  icon: const Icon(Icons.delete_outline, color: _red),
+                ),
+              ]),
+            ])),
+          ]),
+        )),
+      _sectionHeader('Rappels', Icons.notifications_active),
+      if (reminders.isEmpty)
+        _darkCard(child: const Text('Les rappels ajoutés lors de la planification apparaîtront ici.', style: TextStyle(color: _muted)))
+      else
+        ...reminders.map((reminderItem) => _darkCard(child: CheckboxListTile(
+          value: reminderItem['done'] == true,
+          activeColor: _red,
+          contentPadding: EdgeInsets.zero,
+          onChanged: (value) async { setState(() => reminderItem['done'] = value == true); await _save(); },
+          title: Text(reminderItem['title'] ?? 'Rappel'),
+          subtitle: Text('${reminderItem['date'] ?? ''} · ${reminderItem['time'] ?? ''}', style: const TextStyle(color: _muted)),
+        ))),
+    ],
+  );
+
+  Future<void> _addPreparation() async {
+    final title = TextEditingController();
+    final objective = TextEditingController();
+    final materials = TextEditingController();
+    final steps = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: const Text('Préparer un cours'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: title, decoration: const InputDecoration(labelText: 'Titre du cours')),
+                const SizedBox(height: 10),
+                TextField(controller: objective, decoration: const InputDecoration(labelText: 'Objectif pédagogique')),
+                const SizedBox(height: 10),
+                TextField(controller: materials, decoration: const InputDecoration(labelText: 'Matériel requis')),
+                const SizedBox(height: 10),
+                TextField(controller: steps, maxLines: 3, decoration: const InputDecoration(labelText: 'Étapes / déroulement')),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+          FilledButton(
+            onPressed: () async {
+              if (title.text.trim().isEmpty) return;
+              setState(() => coursePreparations.add({
+                'id': _id(), 'title': title.text.trim(),
+                'objective': objective.text.trim(), 'materials': materials.text.trim(),
+                'steps': steps.text.trim(), 'checks': [false, false, false, false],
+                'created': DateTime.now().toIso8601String(),
+              }));
+              await _save();
+              if (mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Créer la préparation'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _coursePreparationPage() => ListView(padding: const EdgeInsets.all(16), children: [
+    _sectionHeader('Préparation des cours', Icons.menu_book),
+    _darkCard(child: Row(children: [const Expanded(child: Text('Préparez les objectifs, le matériel et les étapes avant la séance.', style: TextStyle(color: _muted))), FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: _red), onPressed: _addPreparation, icon: const Icon(Icons.add), label: const Text('Préparer'))])),
+    if (coursePreparations.isEmpty) _darkCard(child: const Text('Aucune préparation enregistrée. Appuyez sur Préparer pour commencer.', style: TextStyle(color: _muted)))
+    else ...coursePreparations.map((p) { final checks = List<bool>.from(p['checks'] ?? [false,false,false,false]); final labels = ['Objectif défini', 'Matériel prêt', 'Étapes préparées', 'Évaluation prévue']; final done = checks.where((v) => v).length; return _darkCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Expanded(child: Text(p['title'] ?? 'Cours', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold))), Text('$done/4', style: const TextStyle(color: _red, fontWeight: FontWeight.bold)), IconButton(onPressed: () async { setState(() => coursePreparations.removeWhere((x) => x['id'] == p['id'])); await _save(); }, icon: const Icon(Icons.delete_outline, color: _red))]), if ((p['objective'] ?? '').toString().isNotEmpty) Text('Objectif : ${p['objective']}'), if ((p['materials'] ?? '').toString().isNotEmpty) Text('Matériel : ${p['materials']}'), if ((p['steps'] ?? '').toString().isNotEmpty) Text('Déroulement : ${p['steps']}'), const SizedBox(height: 8), LinearProgressIndicator(value: done / 4, color: _red, backgroundColor: const Color(0xFF333640)), ...List.generate(4, (i) => CheckboxListTile(dense: true, contentPadding: EdgeInsets.zero, value: checks[i], activeColor: _red, onChanged: (v) async { setState(() { checks[i] = v == true; p['checks'] = checks; }); await _save(); }, title: Text(labels[i])))])); }),
   ]);
 
   List<(Student, int)> _rankedStudents() {
@@ -588,13 +835,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     return [for (var i=0;i<sorted.length;i++) (sorted[i], i+1)];
   }
 
-  Widget _metric(String label, String value, IconData icon) => SizedBox(
-    width: 180, child: Card(child: Padding(padding: const EdgeInsets.all(18), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Icon(icon, size: 28), const SizedBox(height: 12),
-      Text(value, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-      Text(label),
-    ]))),
-  );
+  Widget _metric(String label, String value, IconData icon, double width) => SizedBox(width: width, child: Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: _panel, borderRadius: BorderRadius.circular(16), border: Border.all(color: _red.withOpacity(.35))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Container(width: 38, height: 38, decoration: BoxDecoration(color: _red, borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: Colors.white)), const SizedBox(height: 12), Text(value, style: const TextStyle(fontSize: 27, fontWeight: FontWeight.w900)), Text(label, style: const TextStyle(color: _muted))])));
 
   Widget _studentsPage() => Padding(padding: const EdgeInsets.all(20), child: Column(children: [
     Row(children: [const Expanded(child: Text('Élèves', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold))), FilledButton.icon(onPressed: _addStudent, icon: const Icon(Icons.add), label: const Text('Ajouter'))]),
@@ -698,97 +939,87 @@ class _SchoolHomeState extends State<SchoolHome> {
     }),
   ]);
 
-  Widget _drawerItem(IconData icon, String label, int index) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(label),
-      selected: tab == index,
-      onTap: () {
-        setState(() => tab = index);
-        Navigator.of(context).pop();
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final compactScreen = width < 760;
-    return Scaffold(
-      key: scaffoldKey,
-      appBar: AppBar(
-        title: const Text('DP'),
-        leading: IconButton(
-          tooltip: compactScreen
-              ? 'Ouvrir le menu'
-              : (navigationExpanded ? 'Réduire le menu' : 'Développer le menu'),
-          onPressed: () {
-            if (compactScreen) {
-              scaffoldKey.currentState?.openDrawer();
-            } else {
-              setState(() => navigationExpanded = !navigationExpanded);
-            }
-          },
-          icon: Icon(compactScreen
-              ? Icons.menu
-              : (navigationExpanded ? Icons.menu_open : Icons.menu)),
-        ),
-        actions: [
-          IconButton(tooltip: 'Importer une sauvegarde', onPressed: _importBackup, icon: const Icon(Icons.file_open)),
-          IconButton(tooltip: 'Exporter et partager une sauvegarde', onPressed: _exportBackup, icon: const Icon(Icons.share)),
-        ],
-      ),
-      drawer: compactScreen
-          ? Drawer(
-              child: SafeArea(
-                child: ListView(padding: EdgeInsets.zero, children: [
-                  const DrawerHeader(
-                    child: Align(
-                      alignment: Alignment.bottomLeft,
-                      child: Text('DP', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  ...ListTile.divideTiles(
-                    context: context,
-                    tiles: [
-                      _drawerItem(Icons.dashboard_outlined, 'Accueil', 0),
-                      _drawerItem(Icons.people_outline, 'Élèves', 1),
-                      _drawerItem(Icons.school_outlined, 'Niveaux et groupes', 2),
-                      _drawerItem(Icons.fact_check_outlined, 'Présences', 3),
-                      _drawerItem(Icons.grade_outlined, 'Évaluations et notes', 4),
-                      _drawerItem(Icons.quiz_outlined, 'Examens', 5),
-                      _drawerItem(Icons.assessment_outlined, 'Rapports', 6),
-                    ],
-                  ),
-                ]),
-              ),
-            )
-          : null,
-      body: compactScreen
-          ? SafeArea(child: _page())
-          : Row(children: [
-              NavigationRail(
-                extended: navigationExpanded,
-                minExtendedWidth: 200,
-                selectedIndex: tab,
-                labelType: navigationExpanded ? NavigationRailLabelType.none : NavigationRailLabelType.all,
-                onDestinationSelected: (i) => setState(() => tab = i),
-                destinations: const [
-                  NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Accueil')),
-                  NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Élèves')),
-                  NavigationRailDestination(icon: Icon(Icons.school_outlined), selectedIcon: Icon(Icons.school), label: Text('Niveaux')),
-                  NavigationRailDestination(icon: Icon(Icons.fact_check_outlined), selectedIcon: Icon(Icons.fact_check), label: Text('Présences')),
-                  NavigationRailDestination(icon: Icon(Icons.grade_outlined), selectedIcon: Icon(Icons.grade), label: Text('Notes')),
-                  NavigationRailDestination(icon: Icon(Icons.quiz_outlined), selectedIcon: Icon(Icons.quiz), label: Text('Examens')),
-                  NavigationRailDestination(icon: Icon(Icons.assessment_outlined), selectedIcon: Icon(Icons.assessment), label: Text('Rapports')),
-                ],
-              ),
-              const VerticalDivider(width: 1),
-              Expanded(child: _page()),
-            ]),
-      bottomNavigationBar: null,
-    );
+    final wide = MediaQuery.sizeOf(context).width >= 850;
+    final navItems = const [
+      NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Akèy'),
+      NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'Elèv'),
+      NavigationDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: 'Kalandriye'),
+      NavigationDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: 'Preparasyon'),
+      NavigationDestination(icon: Icon(Icons.emoji_events_outlined), selectedIcon: Icon(Icons.emoji_events), label: 'Klasman'),
+    ];
+    final selectedNav = switch (tab) { 0 => 0, 1 => 1, 7 => 2, 8 => 3, 6 => 4, _ => 0 };
+    return Theme(data: ThemeData.dark(useMaterial3: true).copyWith(
+      scaffoldBackgroundColor: _ink,
+      colorScheme: const ColorScheme.dark(primary: _red, secondary: Color(0xFFFF6575), surface: _panel),
+      appBarTheme: const AppBarTheme(backgroundColor: _ink, foregroundColor: Colors.white, elevation: 0),
+      cardTheme: CardThemeData(color: _panel, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Color(0xFF30333D)))),
+      inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder(), focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: _red))),
+      filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(backgroundColor: _red, foregroundColor: Colors.white, minimumSize: const Size(44, 44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)))),
+    ), child: Scaffold(
+      appBar: AppBar(title: const Text('DP', style: TextStyle(fontWeight: FontWeight.w800)), actions: [
+        IconButton(tooltip: 'Rappels', onPressed: () => setState(() => tab = 7), icon: Badge(label: Text('${reminders.where((r) => r['done'] != true).length}'), child: const Icon(Icons.notifications_active_outlined))),
+        IconButton(tooltip: 'Importer une sauvegarde', onPressed: _importBackup, icon: const Icon(Icons.file_open)),
+        IconButton(tooltip: 'Exporter et partager une sauvegarde', onPressed: _exportBackup, icon: const Icon(Icons.share)),
+        if (!wide) PopupMenuButton<int>(onSelected: (v) => setState(() => tab = v), itemBuilder: (_) => const [PopupMenuItem(value: 2, child: Text('Niveaux et groupes')), PopupMenuItem(value: 3, child: Text('Présences')), PopupMenuItem(value: 4, child: Text('Évaluations et notes')), PopupMenuItem(value: 5, child: Text('Examens')), PopupMenuItem(value: 6, child: Text('Rapports et palmarès'))]),
+      ]),
+      drawer: wide ? null : Drawer(backgroundColor: _panel, child: SafeArea(child: ListView(padding: const EdgeInsets.all(12), children: [const ListTile(leading: Icon(Icons.school, color: _red, size: 32), title: Text('DP Scolaire', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)), subtitle: Text('Jere · Swiv · Reyisi')), const Divider(),
+        for (final item in const [(0,'Akèy',Icons.dashboard),(1,'Élèves',Icons.people),(2,'Niveaux et groupes',Icons.school),(3,'Présences',Icons.fact_check),(4,'Évaluations et notes',Icons.grade),(5,'Examens',Icons.quiz),(6,'Rapports et classement',Icons.emoji_events),(7,'Kalandriye des cours',Icons.calendar_month),(8,'Préparation des cours',Icons.menu_book)]) ListTile(leading: Icon(item.$3, color: tab == item.$1 ? _red : _muted), title: Text(item.$2), selected: tab == item.$1, onTap: () { Navigator.pop(context); setState(() => tab = item.$1); }),
+      ]))),
+      body: Row(children: [
+        if (wide) NavigationRail(backgroundColor: _panel, selectedIndex: tab, labelType: NavigationRailLabelType.all, onDestinationSelected: (i) => setState(() => tab = i), destinations: const [
+          NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Akèy')),
+          NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Élèves')),
+          NavigationRailDestination(icon: Icon(Icons.school_outlined), selectedIcon: Icon(Icons.school), label: Text('Niveaux')),
+          NavigationRailDestination(icon: Icon(Icons.fact_check_outlined), selectedIcon: Icon(Icons.fact_check), label: Text('Présences')),
+          NavigationRailDestination(icon: Icon(Icons.grade_outlined), selectedIcon: Icon(Icons.grade), label: Text('Notes')),
+          NavigationRailDestination(icon: Icon(Icons.quiz_outlined), selectedIcon: Icon(Icons.quiz), label: Text('Examens')),
+          NavigationRailDestination(icon: Icon(Icons.assessment_outlined), selectedIcon: Icon(Icons.assessment), label: Text('Rapports')),
+          NavigationRailDestination(icon: Icon(Icons.calendar_month_outlined), selectedIcon: Icon(Icons.calendar_month), label: Text('Cours')),
+          NavigationRailDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: Text('Préparation')),
+        ]),
+        if (wide) const VerticalDivider(width: 1, color: Color(0xFF30333D)),
+        Expanded(child: _page()),
+      ]),
+      bottomNavigationBar: wide ? null : NavigationBar(backgroundColor: _panel, indicatorColor: _red.withOpacity(.18), selectedIndex: selectedNav, onDestinationSelected: (i) => setState(() => tab = [0,1,7,8,6][i]), destinations: navItems),
+    ));
   }
+
+}
+
+
+class _TrendPainter extends CustomPainter {
+  final List<double> values;
+  _TrendPainter(this.values);
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()..color = const Color(0xFF343742)..strokeWidth = 1;
+    for (var i = 1; i <= 4; i++) { final y = size.height * i / 5; canvas.drawLine(Offset(0, y), Offset(size.width, y), grid); }
+    if (values.isEmpty) {
+      final text = TextPainter(text: const TextSpan(text: 'Saisissez les notes pour afficher le graphique', style: TextStyle(color: Color(0xFFADB3C2), fontSize: 12)), textDirection: TextDirection.ltr)..layout(maxWidth: size.width);
+      text.paint(canvas, Offset(8, size.height / 2 - text.height / 2));
+      return;
+    }
+    final maxValue = values.reduce((a, b) => a > b ? a : b).clamp(1.0, 100.0).toDouble();
+    final points = <Offset>[];
+    for (var i = 0; i < values.length; i++) {
+      final x = values.length == 1 ? size.width / 2 : size.width * i / (values.length - 1);
+      final bounded = values[i].clamp(0.0, maxValue).toDouble();
+      final y = size.height * (1 - bounded / maxValue) * .84 + size.height * .08;
+      points.add(Offset(x, y));
+    }
+    final path = Path()..moveTo(points.first.dx, points.first.dy);
+    for (final point in points.skip(1)) { path.lineTo(point.dx, point.dy); }
+    final area = Path.from(path)..lineTo(points.last.dx, size.height)..lineTo(points.first.dx, size.height)..close();
+    canvas.drawPath(area, Paint()..shader = const LinearGradient(colors: [Color(0x66E51C35), Color(0x00E51C35)], begin: Alignment.topCenter, end: Alignment.bottomCenter).createShader(Offset.zero & size));
+    canvas.drawPath(path, Paint()..color = const Color(0xFFE51C35)..strokeWidth = 2.5..style = PaintingStyle.stroke..strokeCap = StrokeCap.round);
+    for (final point in points) { canvas.drawCircle(point, 3.5, Paint()..color = const Color(0xFFFF6575)); }
+    final label = TextPainter(text: TextSpan(text: '${values.length} élève(s)', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)), textDirection: TextDirection.ltr)..layout();
+    label.paint(canvas, const Offset(4, 4));
+  }
+  @override
+  bool shouldRepaint(covariant _TrendPainter oldDelegate) => oldDelegate.values != values;
 }
 
 extension FirstOrNullExt<E> on Iterable<E> {
