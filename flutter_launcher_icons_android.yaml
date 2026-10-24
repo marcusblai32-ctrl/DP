@@ -1,5 +1,4 @@
 flutter_launcher_icons:
-  windows:
-    generate: true
-    image_path: assets/dp_icon.png
-    icon_size: 48
+  android: true
+  image_path: assets/dp_icon.png
+  min_sdk_android: 21
