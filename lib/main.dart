@@ -1294,6 +1294,11 @@ class _SchoolHomeState extends State<SchoolHome> {
     Map<String, dynamic> data;
     try {
       data = Map<String, dynamic>.from(jsonDecode(utf8.decode(raw)) as Map);
+      if (data['format'] == 'dp_pack') {
+        // Un pack de contenu (questions, préparations) s'ajoute sans remplacer les données.
+        await _applyPack(data);
+        return;
+      }
       if (data['format'] != 'dp_scolaire_backup' || data['version'] != 1) {
         _msg('Ce fichier n’est pas une sauvegarde DP Scolaire reconnue.', error: true);
         return;
@@ -1924,10 +1929,18 @@ class _SchoolHomeState extends State<SchoolHome> {
       _msg('Le fichier JSON est invalide ou endommagé.', error: true);
       return;
     }
+    if (data['format'] == 'dp_scolaire_backup') {
+      _msg('Ce fichier est une sauvegarde complète : utilisez « Importer une sauvegarde ».', error: true);
+      return;
+    }
     if (data['format'] != 'dp_pack') {
       _msg('Ce fichier n’est pas un pack DP (format « dp_pack » attendu).', error: true);
       return;
     }
+    await _applyPack(data);
+  }
+
+  Future<void> _applyPack(Map<String, dynamic> data) async {
     var addedQuestions = 0, addedPreparations = 0;
     try {
       for (final e in ((data['questions'] as List?) ?? [])) {
