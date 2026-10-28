@@ -27,3 +27,25 @@ dates affichées en jj/mm/aaaa, messages de validation dans les formulaires.
 ## Non vérifié
 Le code n'a pas pu être compilé ni analysé dans l'environnement de préparation (pas de SDK Flutter/Dart).
 Lancez le workflow GitHub Actions « Build DP Android + Windows » et `flutter analyze` / `flutter test` pour confirmer.
+
+## Mise à jour : documents PDF, questions et navigation
+- **Bulletin scolaire** (`lib/services/pdf_service.dart`) : en-tête établissement (« Dimension Production » par défaut, modifiable),
+  tableau des notes, moyenne /100 et /20, rang dans le groupe, mention, assiduité, appréciation, observations, signatures.
+  Tout est modifiable avant l'impression (établissement, période, titulaire, date, notes, appréciation) sans toucher aux données.
+- **Bulletins de la classe** : un seul PDF pour tous les élèves d'un niveau et d'un groupe (écran Rapports).
+- **Examen** : en-tête « Dimension Production », cases Nom / Prénom / Classe / Date / Durée / Note, consignes, barème,
+  numérotation des pages, version corrigé enseignant, retrait de questions avant impression.
+- **Questions** : nombre de choix illimité (ajout / suppression), bonne(s) réponse(s) cochée(s), image PNG/JPEG dans l'énoncé,
+  modification d'une question existante. Les images sont incluses dans la sauvegarde JSON.
+- **Navigation** : le bouton « Plus » de la barre du bas est supprimé (doublon du menu en haut à gauche).
+- Non compilé ni testé dans l'environnement de préparation : lancer `flutter analyze` et le workflow GitHub Actions.
+
+## Mise à jour : rappels avec notification sonore
+- Android : vraies notifications planifiées (canal « Rappels de cours », importance maximale, son + vibration),
+  réaffichées au redémarrage du téléphone. `lib/services/notification_service.dart`.
+- Avance au choix (à l'heure, 10 min, 30 min, 1 h, 1 jour), nouveau bouton « Nouveau rappel » et bouton « Tester le son ».
+- Windows : alerte dans l'application avec bip lorsque DP est ouvert (pas de notification système).
+- Dépendances ajoutées : `flutter_local_notifications` (version fixe 18.0.1, sans module Windows) et `timezone`.
+- Workflow : une seule étape ajoutée (« Enable Android reminder notifications ») qui déclare les permissions Android
+  et active le desugaring requis par le plugin. Rien d'autre n'a été modifié.
+- Non compilé ni testé dans l'environnement de préparation.
