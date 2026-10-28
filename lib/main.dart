@@ -1944,10 +1944,25 @@ class _SchoolHomeState extends State<SchoolHome> {
     var addedQuestions = 0, addedPreparations = 0;
     try {
       for (final e in ((data['questions'] as List?) ?? [])) {
-        final q = ExamQuestion.fromJson(Map<String, dynamic>.from(e as Map));
+        final raw = Map<String, dynamic>.from(e as Map);
+        final imageData = raw['imageData'];
+        final q = ExamQuestion.fromJson(raw);
         if (q.prompt.trim().isEmpty) continue;
         if (questionBank.any((x) => x.prompt == q.prompt && x.category == q.category)) continue;
-        q.imageFile = '';
+        // Image optionnelle du pack : « imageData » (PNG en base64) + « imageFile » (nom du fichier).
+        var imageFile = q.imageFile.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+        if (imageData is String && imageData.isNotEmpty && imageFile.isNotEmpty && _docsPath.isNotEmpty) {
+          try {
+            final dir = Directory('$_docsPath${Platform.pathSeparator}dp_images');
+            if (!await dir.exists()) await dir.create(recursive: true);
+            await File(_imagePath(imageFile)).writeAsBytes(base64Decode(imageData));
+          } catch (_) {
+            imageFile = '';
+          }
+        } else {
+          imageFile = '';
+        }
+        q.imageFile = imageFile;
         questionBank.add(q);
         addedQuestions++;
       }
