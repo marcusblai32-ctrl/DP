@@ -49,3 +49,9 @@ Lancez le workflow GitHub Actions « Build DP Android + Windows » et `flutter a
 - Workflow : une seule étape ajoutée (« Enable Android reminder notifications ») qui déclare les permissions Android
   et active le desugaring requis par le plugin. Rien d'autre n'a été modifié.
 - Non compilé ni testé dans l'environnement de préparation.
+
+## Mise à jour : packs de contenu
+- « Importer un pack » (écrans Examens et Préparation des cours) : ajoute des questions et des préparations depuis un fichier
+  JSON de format `dp_pack`, sans remplacer les données (les doublons sont ignorés).
+- Le générateur d'examen accepte un mot-clé (ex. « Rythme », « Chap. 3 ») pour limiter les questions.
+- Pack fourni : `DP_pack_Dimension2_Revision_Chap1-4_Prep_Chap6.json` (76 questions + 6 préparations).
