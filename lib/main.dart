@@ -1,10 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
@@ -14,7 +16,10 @@ import 'models/attendance_record.dart';
 import 'models/exam_question.dart';
 import 'models/grade_record.dart';
 import 'models/student.dart';
+import 'services/file_name_service.dart';
 import 'services/grade_service.dart';
+import 'services/notification_service.dart';
+import 'services/pdf_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_card.dart';
 import 'widgets/dashboard_widgets.dart';
@@ -62,6 +67,21 @@ const List<_NavItem> _navItems = [
   _NavItem(8, 'Préparation des cours', Icons.menu_book_outlined, Icons.menu_book),
 ];
 
+/// Avance du rappel (libellé → minutes).
+const Map<String, int> _leadOptions = {
+  'À l’heure': 0,
+  '10 minutes avant': 10,
+  '30 minutes avant': 30,
+  '1 heure avant': 60,
+  '1 jour avant': 1440,
+};
+
+String _defaultSchoolYear() {
+  final now = DateTime.now();
+  final start = now.month >= 8 ? now.year : now.year - 1;
+  return '$start-${start + 1}';
+}
+
 T? _findOrNull<T>(Iterable<T> items, bool Function(T) test) {
   for (final item in items) {
     if (test(item)) return item;
@@ -79,6 +99,15 @@ class _SchoolHomeState extends State<SchoolHome> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final TextEditingController _studentSearch = TextEditingController();
   String _studentQuery = '';
+  String _docsPath = '';
+  Timer? _reminderTimer;
+  final Set<String> _alerted = {};
+  bool _alertOpen = false;
+  final Map<String, String> schoolInfo = {
+    'name': 'Dimension Production',
+    'year': _defaultSchoolYear(),
+    'teacher': '',
+  };
 
   int tab = 0;
   bool loading = true;
@@ -108,6 +137,7 @@ class _SchoolHomeState extends State<SchoolHome> {
 
   @override
   void dispose() {
+    _reminderTimer?.cancel();
     _studentSearch.dispose();
     super.dispose();
   }
@@ -120,19 +150,17 @@ class _SchoolHomeState extends State<SchoolHome> {
     final p = await SharedPreferences.getInstance();
     var loadFailed = false;
     try {
+      _docsPath = (await getApplicationDocumentsDirectory()).path;
+    } catch (_) {}
+    try {
       levels = List<String>.from(jsonDecode(p.getString('levels') ?? '["Niveau 1"]'));
       groups = List<String>.from(jsonDecode(p.getString('groups') ?? '["Groupe A"]'));
       students = (jsonDecode(p.getString('students') ?? '[]') as List).map((e) => Student.fromJson(e)).toList();
       assessments = (jsonDecode(p.getString('assessments') ?? '[]') as List).map((e) => Assessment.fromJson(e)).toList();
       attendance = (jsonDecode(p.getString('attendance') ?? '[]') as List).map((e) => AttendanceRecord.fromJson(e)).toList();
       grades = (jsonDecode(p.getString('grades') ?? '[]') as List).map((e) => GradeRecord.fromJson(e)).toList();
-      questionBank = (jsonDecode(p.getString('questions') ?? '[]') as List).map((e) => ExamQuestion(
-            e['prompt'] ?? '',
-            e['category'] ?? 'QCU',
-            List<String>.from(e['choices'] ?? []),
-            e['answer'] ?? '',
-            (e['points'] as num?)?.toDouble() ?? 1,
-          )).toList();
+      questionBank = (jsonDecode(p.getString('questions') ?? '[]') as List).map((e) => ExamQuestion.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      schoolInfo.addAll((jsonDecode(p.getString('schoolInfo') ?? '{}') as Map).map((k, v) => MapEntry('$k', '$v')));
       remarks.addAll(Map<String, String>.from(jsonDecode(p.getString('remarks') ?? '{}')));
       courseSessions = List<Map<String, dynamic>>.from((jsonDecode(p.getString('courseSessions') ?? '[]') as List).map((e) => Map<String, dynamic>.from(e)));
       coursePreparations = List<Map<String, dynamic>>.from((jsonDecode(p.getString('coursePreparations') ?? '[]') as List).map((e) => Map<String, dynamic>.from(e)));
@@ -142,6 +170,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     }
     if (!mounted) return;
     setState(() => loading = false);
+    _startReminderEngine();
     if (loadFailed) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _msg('Certaines données enregistrées n’ont pas pu être lues.', error: true);
@@ -162,6 +191,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     await p.setString('courseSessions', jsonEncode(courseSessions));
     await p.setString('coursePreparations', jsonEncode(coursePreparations));
     await p.setString('reminders', jsonEncode(reminders));
+    await p.setString('schoolInfo', jsonEncode(schoolInfo));
   }
 
   // ---------------------------------------------------------------------------
@@ -598,68 +628,308 @@ class _SchoolHomeState extends State<SchoolHome> {
     );
   }
 
-  Future<void> _addQuestion() async {
-    final prompt = TextEditingController();
-    final answer = TextEditingController();
-    final choices = TextEditingController();
-    final points = TextEditingController(text: '1');
-    String category = 'QCU';
-    String? promptError;
+  // ---------------------------------------------------------------------------
+  // Banque de questions : images, choix dynamiques, examen
+  // ---------------------------------------------------------------------------
+
+  static const List<String> _questionCategories = ['QCU', 'QCM', 'Compléter', 'Définition', 'Subjectif'];
+
+  String _imagePath(String name) => '$_docsPath${Platform.pathSeparator}dp_images${Platform.pathSeparator}$name';
+
+  String _choiceLabel(int i) => i < 26 ? String.fromCharCode(65 + i) : '${i + 1}';
+
+  Widget _questionImage(String name, {double height = 120}) {
+    if (name.isEmpty || _docsPath.isEmpty) return const SizedBox.shrink();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Image.file(
+        File(_imagePath(name)),
+        height: height,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      ),
+    );
+  }
+
+  Future<String?> _pickQuestionImage() async {
+    if (_docsPath.isEmpty) {
+      _msg('Le dossier de stockage est indisponible sur cet appareil.', error: true);
+      return null;
+    }
+    final picked = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Choisir une image',
+      type: FileType.custom,
+      allowedExtensions: ['png', 'jpg', 'jpeg'],
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return null;
+    final file = picked.files.single;
+    final Uint8List? bytes = file.bytes;
+    if (bytes == null) {
+      _msg('Impossible de lire cette image.', error: true);
+      return null;
+    }
+    if (bytes.length > 5 * 1024 * 1024) {
+      _msg('Image trop volumineuse (5 Mo maximum).', error: true);
+      return null;
+    }
+    try {
+      await decodeImageFromList(bytes);
+    } catch (_) {
+      _msg('Ce fichier n’est pas une image PNG ou JPEG valide.', error: true);
+      return null;
+    }
+    final ext = (file.extension ?? 'png').toLowerCase() == 'png' ? 'png' : 'jpg';
+    final name = 'q_${_id()}.$ext';
+    try {
+      final dir = Directory('$_docsPath${Platform.pathSeparator}dp_images');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      await File(_imagePath(name)).writeAsBytes(bytes);
+      return name;
+    } catch (e) {
+      _msg('Impossible d’enregistrer l’image : $e', error: true);
+      return null;
+    }
+  }
+
+  Future<void> _deleteImageFile(String name) async {
+    if (name.isEmpty || _docsPath.isEmpty) return;
+    try {
+      final f = File(_imagePath(name));
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
+
+  Future<void> _addQuestion() => _editQuestion();
+
+  Future<void> _editQuestion({ExamQuestion? existing}) async {
+    final prompt = TextEditingController(text: existing?.prompt ?? '');
+    final answer = TextEditingController(text: (existing != null && !existing.hasChoices) ? existing.answer : '');
+    final points = TextEditingController(text: _fmtNum(existing?.points ?? 1));
+    String category = existing?.category ?? 'QCU';
+    String imageFile = existing?.imageFile ?? '';
+    final originalImage = imageFile;
+    final pickedNew = <String>[];
+    final choiceCtrls = <TextEditingController>[];
+    final correct = <bool>[];
+    if (existing != null && existing.hasChoices && existing.choices.isNotEmpty) {
+      final ci = existing.correctIndexes;
+      for (var i = 0; i < existing.choices.length; i++) {
+        choiceCtrls.add(TextEditingController(text: existing.choices[i]));
+        correct.add(ci.contains(i));
+      }
+    }
+    final minInitial = existing == null ? 4 : 2;
+    while (choiceCtrls.length < minInitial) {
+      choiceCtrls.add(TextEditingController());
+      correct.add(false);
+    }
+    String? promptError, choicesError, pointsError;
+    var saved = false;
+
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: const Text('Ajouter une question à la banque'),
-          content: DialogBody(
-            maxWidth: 500,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              _dropdown('Catégorie', category, const ['QCU', 'QCM', 'Compléter', 'Définition', 'Subjectif'], (v) => setD(() => category = v)),
-              const SizedBox(height: 14),
-              TextField(
-                controller: prompt,
-                maxLines: 3,
-                minLines: 1,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(labelText: 'Question', errorText: promptError),
-              ),
-              const SizedBox(height: 14),
-              TextField(controller: choices, decoration: const InputDecoration(labelText: 'Choix séparés par | (QCM/QCU)')),
-              const SizedBox(height: 14),
-              TextField(controller: answer, decoration: const InputDecoration(labelText: 'Réponse attendue / corrigé')),
-              const SizedBox(height: 14),
-              TextField(
-                controller: points,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: 'Points'),
-              ),
-            ]),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
-            FilledButton(
-              onPressed: () async {
-                if (prompt.text.trim().isEmpty) {
-                  setD(() => promptError = 'Saisissez la question.');
-                  return;
-                }
-                questionBank.add(ExamQuestion(
-                  prompt.text.trim(),
-                  category,
-                  choices.text.split('|').map((e) => e.trim()).where((e) => e.isNotEmpty).toList(),
-                  answer.text.trim(),
-                  _parseNumber(points.text) ?? 1,
-                ));
-                await _save();
-                if (ctx.mounted) Navigator.pop(ctx);
-                if (mounted) setState(() {});
-                _msg('Question ajoutée à la banque.');
-              },
-              child: const Text('Ajouter'),
+        builder: (ctx, setD) {
+          final isChoice = category == 'QCU' || category == 'QCM';
+          final isMulti = category == 'QCM';
+          return AlertDialog(
+            title: Text(existing == null ? 'Ajouter une question' : 'Modifier la question'),
+            content: DialogBody(
+              maxWidth: 580,
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                _dropdown('Catégorie', category, _questionCategories, (v) {
+                  setD(() {
+                    category = v;
+                    if (v == 'QCU') {
+                      final first = correct.indexOf(true);
+                      for (var j = 0; j < correct.length; j++) {
+                        correct[j] = j == first;
+                      }
+                    }
+                  });
+                }),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: prompt,
+                  maxLines: 5,
+                  minLines: 2,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(labelText: 'Énoncé de la question', errorText: promptError),
+                ),
+                const SizedBox(height: 12),
+                Wrap(spacing: 10, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final name = await _pickQuestionImage();
+                      if (name != null) {
+                        pickedNew.add(name);
+                        setD(() => imageFile = name);
+                      }
+                    },
+                    icon: const Icon(Icons.image_outlined),
+                    label: Text(imageFile.isEmpty ? 'Ajouter une image' : 'Changer l’image'),
+                  ),
+                  if (imageFile.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: () => setD(() => imageFile = ''),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Retirer'),
+                    ),
+                ]),
+                if (imageFile.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Center(child: _questionImage(imageFile, height: 140)),
+                  ),
+                const SizedBox(height: 16),
+                if (isChoice) ...[
+                  Text(
+                    isMulti ? 'Choix de réponse (cochez toutes les bonnes réponses)' : 'Choix de réponse (sélectionnez la bonne réponse)',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  for (var i = 0; i < choiceCtrls.length; i++)
+                    Padding(
+                      key: ObjectKey(choiceCtrls[i]),
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(children: [
+                        IconButton(
+                          tooltip: 'Bonne réponse',
+                          onPressed: () => setD(() {
+                            if (isMulti) {
+                              correct[i] = !correct[i];
+                            } else {
+                              for (var j = 0; j < correct.length; j++) {
+                                correct[j] = j == i;
+                              }
+                            }
+                          }),
+                          icon: Icon(
+                            isMulti
+                                ? (correct[i] ? Icons.check_box : Icons.check_box_outline_blank)
+                                : (correct[i] ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                            color: correct[i] ? AppColors.success : AppColors.muted,
+                          ),
+                        ),
+                        Expanded(
+                          child: TextField(
+                            controller: choiceCtrls[i],
+                            decoration: InputDecoration(labelText: 'Choix ${_choiceLabel(i)}'),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Supprimer ce choix',
+                          onPressed: choiceCtrls.length <= 2
+                              ? null
+                              : () => setD(() {
+                                    choiceCtrls.removeAt(i);
+                                    correct.removeAt(i);
+                                  }),
+                          icon: const Icon(Icons.remove_circle_outline),
+                        ),
+                      ]),
+                    ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: () => setD(() {
+                        choiceCtrls.add(TextEditingController());
+                        correct.add(false);
+                      }),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Ajouter un choix'),
+                    ),
+                  ),
+                  if (choicesError != null) ...[
+                    const SizedBox(height: 10),
+                    FormErrorText(choicesError),
+                  ],
+                ] else
+                  TextField(
+                    controller: answer,
+                    maxLines: 4,
+                    minLines: 1,
+                    decoration: const InputDecoration(labelText: 'Réponse attendue / corrigé'),
+                  ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: points,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(labelText: 'Points', errorText: pointsError),
+                ),
+              ]),
             ),
-          ],
-        ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              FilledButton(
+                onPressed: () async {
+                  final text = prompt.text.trim();
+                  final pts = points.text.trim().isEmpty ? 1.0 : _parseNumber(points.text);
+                  String? pe, ce, pte;
+                  if (text.isEmpty) pe = 'Saisissez l’énoncé de la question.';
+                  if (pts == null || pts <= 0) pte = 'Les points doivent être un nombre supérieur à 0.';
+                  final newChoices = <String>[];
+                  final newCorrect = <String>[];
+                  if (isChoice) {
+                    for (var i = 0; i < choiceCtrls.length; i++) {
+                      final t = choiceCtrls[i].text.trim().replaceAll('|', '/');
+                      if (t.isEmpty) continue;
+                      newChoices.add(t);
+                      if (correct[i]) newCorrect.add(t);
+                    }
+                    if (newChoices.length < 2) {
+                      ce = 'Saisissez au moins deux choix.';
+                    } else if (newChoices.toSet().length != newChoices.length) {
+                      ce = 'Deux choix sont identiques.';
+                    } else if (newCorrect.isEmpty) {
+                      ce = 'Indiquez au moins une bonne réponse.';
+                    } else if (category == 'QCU' && newCorrect.length != 1) {
+                      ce = 'Un QCU doit avoir une seule bonne réponse.';
+                    }
+                  }
+                  if (pe != null || ce != null || pte != null) {
+                    setD(() {
+                      promptError = pe;
+                      choicesError = ce;
+                      pointsError = pte;
+                    });
+                    return;
+                  }
+                  final q = existing ?? ExamQuestion('', category, [], '', 1);
+                  q.prompt = text;
+                  q.category = category;
+                  q.points = pts!;
+                  q.imageFile = imageFile;
+                  if (isChoice) {
+                    q.choices = newChoices;
+                    q.answer = newCorrect.join(' | ');
+                  } else {
+                    q.answer = answer.text.trim();
+                  }
+                  if (existing == null) questionBank.add(q);
+                  saved = true;
+                  await _save();
+                  if (originalImage.isNotEmpty && originalImage != imageFile) await _deleteImageFile(originalImage);
+                  for (final f in pickedNew) {
+                    if (f != imageFile) await _deleteImageFile(f);
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (mounted) setState(() {});
+                  _msg(existing == null ? 'Question ajoutée à la banque.' : 'Question modifiée.');
+                },
+                child: Text(existing == null ? 'Ajouter' : 'Enregistrer'),
+              ),
+            ],
+          );
+        },
       ),
     );
+    if (!saved) {
+      for (final f in pickedNew) {
+        await _deleteImageFile(f);
+      }
+    }
   }
 
   Future<void> _deleteQuestion(ExamQuestion q) async {
@@ -673,6 +943,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     if (!ok) return;
     setState(() => questionBank.remove(q));
     await _save();
+    await _deleteImageFile(q.imageFile);
   }
 
   Future<void> _generateExam() async {
@@ -691,7 +962,7 @@ class _SchoolHomeState extends State<SchoolHome> {
           content: DialogBody(
             maxWidth: 420,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              _dropdown('Catégorie', category, const ['Toutes', 'QCU', 'QCM', 'Compléter', 'Définition', 'Subjectif'], (v) => setD(() => category = v)),
+              _dropdown('Catégorie', category, const ['Toutes', ..._questionCategories], (v) => setD(() => category = v)),
               const SizedBox(height: 14),
               TextField(
                 controller: count,
@@ -700,7 +971,7 @@ class _SchoolHomeState extends State<SchoolHome> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Le générateur choisit des questions existantes au hasard. Il ne crée pas de nouvelles questions par IA.',
+                'Le générateur choisit des questions existantes au hasard. Vous pourrez retirer des questions avant d’imprimer.',
                 style: TextStyle(color: AppColors.muted),
               ),
             ]),
@@ -727,53 +998,159 @@ class _SchoolHomeState extends State<SchoolHome> {
     );
   }
 
+  Future<void> _printExam(ExamPdfOptions options, List<ExamQuestion> qs) async {
+    try {
+      final items = <ExamPdfQuestion>[];
+      for (final q in qs) {
+        Uint8List? image;
+        if (q.imageFile.isNotEmpty && _docsPath.isNotEmpty) {
+          try {
+            final f = File(_imagePath(q.imageFile));
+            if (await f.exists()) image = await f.readAsBytes();
+          } catch (_) {}
+        }
+        items.add(ExamPdfQuestion(
+          prompt: q.prompt,
+          category: q.category,
+          choices: q.hasChoices ? q.choices : const [],
+          correct: q.correctIndexes,
+          answer: q.answer,
+          points: q.points,
+          image: image,
+        ));
+      }
+      final bytes = await PdfService.buildExam(options, items);
+      final base = options.subject.isEmpty ? options.title : options.subject;
+      final name = FileNameService.safe('${options.answerKey ? 'Corrige' : 'Examen'}_${base}_${options.date}');
+      await Printing.layoutPdf(name: name, onLayout: (_) async => bytes);
+    } catch (e) {
+      _msg('Impossible de générer le PDF : $e', error: true);
+    }
+  }
+
   Future<void> _showExamPreview(List<ExamQuestion> questions, String category) async {
     if (!mounted) return;
+    final selected = List<ExamQuestion>.from(questions);
+    final school = TextEditingController(text: schoolInfo['name'] ?? '');
+    final year = TextEditingController(text: schoolInfo['year'] ?? '');
+    final title = TextEditingController(text: 'Examen');
+    final subject = TextEditingController();
+    final duration = TextEditingController(text: '1 heure');
+    final instructions = TextEditingController(
+      text: 'Lisez attentivement chaque question. Répondez directement sur cette feuille. Les téléphones sont interdits.',
+    );
+    const none = 'Non précisé';
+    String level = none, group = none;
+    DateTime date = DateTime.now();
+    bool answerKey = false;
+    String? error;
+
     await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Examen généré'),
-        content: SizedBox(
-          width: 600,
-          height: dialogListHeight(ctx),
-          child: ListView(children: [
-            Text('Catégorie : $category · ${questions.length} questions', style: const TextStyle(color: AppColors.muted)),
-            const Divider(height: 24),
-            ...questions.asMap().entries.map((e) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('${e.key + 1}. ${e.value.prompt}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    if (e.value.choices.isNotEmpty) Text('Choix : ${e.value.choices.join(" / ")}', style: const TextStyle(color: AppColors.muted)),
-                    Text('Points : ${_fmtNum(e.value.points)}', style: const TextStyle(color: AppColors.muted)),
-                  ]),
-                )),
-          ]),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fermer')),
-          FilledButton.icon(
-            onPressed: () async {
-              final doc = pw.Document();
-              doc.addPage(pw.MultiPage(build: (_) => [
-                    pw.Text('DP SCOLAIRE · EXAMEN', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-                    pw.SizedBox(height: 12),
-                    pw.Text('Nom: __________________________________    Date: ______________'),
-                    pw.SizedBox(height: 16),
-                    ...questions.asMap().entries.map((e) => pw.Padding(
-                          padding: const pw.EdgeInsets.only(bottom: 12),
-                          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-                            pw.Text('${e.key + 1}. ${e.value.prompt} (${e.value.points} pts)'),
-                            if (e.value.choices.isNotEmpty) pw.Text(e.value.choices.join('    ')),
-                            pw.SizedBox(height: 18),
-                          ]),
-                        )),
-                  ]));
-              await Printing.layoutPdf(onLayout: (_) async => doc.save());
-            },
-            icon: const Icon(Icons.picture_as_pdf),
-            label: const Text('Imprimer / PDF'),
-          ),
-        ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final total = selected.fold<double>(0, (sum, q) => sum + q.points);
+          return AlertDialog(
+            title: const Text('Préparer l’examen'),
+            content: DialogBody(
+              maxWidth: 620,
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Text('${selected.length} question(s) · ${_fmtNum(total)} point(s) · catégorie : $category', style: const TextStyle(color: AppColors.muted)),
+                const SizedBox(height: 14),
+                TextField(controller: school, decoration: const InputDecoration(labelText: 'Établissement (en-tête)')),
+                const SizedBox(height: 12),
+                TextField(controller: year, decoration: const InputDecoration(labelText: 'Année scolaire')),
+                const SizedBox(height: 12),
+                TextField(controller: title, decoration: const InputDecoration(labelText: 'Titre du document')),
+                const SizedBox(height: 12),
+                TextField(controller: subject, textCapitalization: TextCapitalization.sentences, decoration: const InputDecoration(labelText: 'Matière')),
+                const SizedBox(height: 12),
+                _dropdown('Classe / niveau', level, [none, ...levels], (v) => setD(() => level = v)),
+                const SizedBox(height: 12),
+                _dropdown('Groupe', group, [none, ...groups], (v) => setD(() => group = v)),
+                const SizedBox(height: 4),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.calendar_month, color: AppColors.redSoft),
+                  title: Text('Date : ${_fmtDate(_isoFromDate(date))}'),
+                  subtitle: const Text('Appuyez pour modifier', style: TextStyle(color: AppColors.muted)),
+                  onTap: () async {
+                    final selectedDate = await showDatePicker(context: ctx, initialDate: date, firstDate: DateTime(2020), lastDate: DateTime(2100));
+                    if (selectedDate != null) setD(() => date = selectedDate);
+                  },
+                ),
+                TextField(controller: duration, decoration: const InputDecoration(labelText: 'Durée (ex. 1 heure 30)')),
+                const SizedBox(height: 12),
+                TextField(controller: instructions, maxLines: 4, minLines: 2, decoration: const InputDecoration(labelText: 'Consignes')),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: answerKey,
+                  onChanged: (v) => setD(() => answerKey = v),
+                  title: const Text('Version corrigé (enseignant)'),
+                  subtitle: const Text('Marque les bonnes réponses et affiche les corrigés.', style: TextStyle(color: AppColors.muted)),
+                ),
+                const Divider(height: 24),
+                const Text('Questions retenues', style: TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 6),
+                for (var i = 0; i < selected.length; i++)
+                  Padding(
+                    key: ObjectKey(selected[i]),
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text('${i + 1}. ${selected[i].prompt}', maxLines: 2, overflow: TextOverflow.ellipsis),
+                      ),
+                      if (selected[i].imageFile.isNotEmpty) const Padding(padding: EdgeInsets.only(left: 6), child: Icon(Icons.image_outlined, size: 18, color: AppColors.muted)),
+                      IconButton(
+                        tooltip: 'Retirer cette question',
+                        icon: const Icon(Icons.remove_circle_outline),
+                        onPressed: () => setD(() => selected.removeAt(i)),
+                      ),
+                    ]),
+                  ),
+                if (selected.isEmpty) const Text('Aucune question : fermez et régénérez l’examen.', style: TextStyle(color: AppColors.danger)),
+                if (error != null) ...[
+                  const SizedBox(height: 10),
+                  FormErrorText(error),
+                ],
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fermer')),
+              FilledButton.icon(
+                onPressed: selected.isEmpty
+                    ? null
+                    : () async {
+                        if (school.text.trim().isEmpty) {
+                          setD(() => error = 'Indiquez le nom de l’établissement.');
+                          return;
+                        }
+                        setD(() => error = null);
+                        schoolInfo['name'] = school.text.trim();
+                        schoolInfo['year'] = year.text.trim();
+                        await _save();
+                        await _printExam(
+                          ExamPdfOptions(
+                            schoolName: school.text.trim(),
+                            schoolYear: year.text.trim(),
+                            title: title.text.trim().isEmpty ? 'Examen' : title.text.trim(),
+                            subject: subject.text.trim(),
+                            level: level == none ? '' : level,
+                            group: group == none ? '' : group,
+                            date: _fmtDate(_isoFromDate(date)),
+                            duration: duration.text.trim(),
+                            instructions: instructions.text.trim(),
+                            answerKey: answerKey,
+                          ),
+                          selected,
+                        );
+                      },
+                icon: const Icon(Icons.picture_as_pdf),
+                label: const Text('Aperçu / PDF'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -792,6 +1169,7 @@ class _SchoolHomeState extends State<SchoolHome> {
       destructive: true,
     );
     if (!ok) return;
+    final orphanImages = questionBank.map((q) => q.imageFile).where((f) => f.isNotEmpty).toList();
     setState(() {
       attendance.clear();
       grades.clear();
@@ -802,6 +1180,10 @@ class _SchoolHomeState extends State<SchoolHome> {
       reminders.clear();
     });
     await _save();
+    await NotificationService.cancelAll();
+    for (final f in orphanImages) {
+      await _deleteImageFile(f);
+    }
     _msg('Historique effacé. Les élèves, niveaux et groupes sont conservés.');
   }
 
@@ -835,6 +1217,17 @@ class _SchoolHomeState extends State<SchoolHome> {
   }
 
   Future<void> _exportBackup() async {
+    final questionsJson = <Map<String, dynamic>>[];
+    for (final q in questionBank) {
+      final m = q.toJson();
+      if (q.imageFile.isNotEmpty && _docsPath.isNotEmpty) {
+        try {
+          final f = File(_imagePath(q.imageFile));
+          if (await f.exists()) m['imageData'] = base64Encode(await f.readAsBytes());
+        } catch (_) {}
+      }
+      questionsJson.add(m);
+    }
     final data = {
       'format': 'dp_scolaire_backup',
       'version': 1,
@@ -845,7 +1238,8 @@ class _SchoolHomeState extends State<SchoolHome> {
       'assessments': assessments.map((e) => e.toJson()).toList(),
       'attendance': attendance.map((e) => e.toJson()).toList(),
       'grades': grades.map((e) => e.toJson()).toList(),
-      'questions': questionBank.map((e) => e.toJson()).toList(),
+      'questions': questionsJson,
+      'schoolInfo': schoolInfo,
       'remarks': remarks,
       'courseSessions': courseSessions,
       'coursePreparations': coursePreparations,
@@ -918,15 +1312,34 @@ class _SchoolHomeState extends State<SchoolHome> {
       assessments = ((data['assessments'] as List?) ?? []).map((e) => Assessment.fromJson(Map<String, dynamic>.from(e as Map))).toList();
       attendance = ((data['attendance'] as List?) ?? []).map((e) => AttendanceRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
       grades = ((data['grades'] as List?) ?? []).map((e) => GradeRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-      questionBank = ((data['questions'] as List?) ?? []).map((e) {
+      final importedQuestions = <ExamQuestion>[];
+      for (final e in ((data['questions'] as List?) ?? [])) {
         final q = Map<String, dynamic>.from(e as Map);
-        return ExamQuestion(q['prompt'] ?? '', q['category'] ?? 'QCU', List<String>.from(q['choices'] ?? []), q['answer'] ?? '', (q['points'] as num?)?.toDouble() ?? 1);
-      }).toList();
+        final imageData = q['imageData'];
+        var imageFile = (q['imageFile'] ?? '').toString().replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+        if (imageData is String && imageData.isNotEmpty && imageFile.isNotEmpty && _docsPath.isNotEmpty) {
+          try {
+            final dir = Directory('$_docsPath${Platform.pathSeparator}dp_images');
+            if (!await dir.exists()) await dir.create(recursive: true);
+            await File(_imagePath(imageFile)).writeAsBytes(base64Decode(imageData));
+          } catch (_) {
+            imageFile = '';
+          }
+        }
+        q['imageFile'] = imageFile;
+        q.remove('imageData');
+        importedQuestions.add(ExamQuestion.fromJson(q));
+      }
+      questionBank = importedQuestions;
+      if (data['schoolInfo'] is Map) {
+        schoolInfo.addAll((data['schoolInfo'] as Map).map((k, v) => MapEntry('$k', '$v')));
+      }
       remarks.addAll(Map<String, String>.from(data['remarks'] ?? {}));
       courseSessions = ((data['courseSessions'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
       coursePreparations = ((data['coursePreparations'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
       reminders = ((data['reminders'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
       await _save();
+      await NotificationService.syncAll(reminders);
       if (mounted) {
         setState(() {});
         _msg('Sauvegarde importée avec succès.');
@@ -972,31 +1385,395 @@ class _SchoolHomeState extends State<SchoolHome> {
     );
   }
 
-  Future<void> _showReport(Student s) async {
+  // --- Bulletins scolaires -----------------------------------------------------
+
+  List<GradeRecord> _reportGrades(Student s) {
+    final byId = {for (final a in assessments) a.id: a};
+    final list = grades.where((g) {
+      final a = byId[g.assessmentId];
+      return g.studentId == s.id && a != null && a.level == s.level && a.group == s.group;
+    }).toList();
+    list.sort((x, y) {
+      final ax = byId[x.assessmentId]!;
+      final ay = byId[y.assessmentId]!;
+      final c = ax.date.compareTo(ay.date);
+      return c != 0 ? c : ax.title.compareTo(ay.title);
+    });
+    return list;
+  }
+
+  /// Rang de l'élève dans son niveau et son groupe, et effectif de ce groupe.
+  (int, int) _classRank(Student s) {
+    final mates = students.where((x) => x.level == s.level && x.group == s.group).toList();
+    final mine = _average(s);
+    var rank = 1;
+    for (final m in mates) {
+      if (m.id != s.id && _average(m) > mine) rank++;
+    }
+    return (rank, mates.length);
+  }
+
+  /// Absences, retards et absences excusées de l'élève.
+  (int, int, int) _attendanceCounts(Student s) {
+    var absent = 0, late = 0, excused = 0;
+    for (final r in attendance) {
+      if (r.studentId != s.id) continue;
+      if (r.status == 'Absent') {
+        absent++;
+      } else if (r.status == 'Retard') {
+        late++;
+      } else if (r.status == 'Excusé') {
+        excused++;
+      }
+    }
+    return (absent, late, excused);
+  }
+
+  ReportCardData _defaultReportData(
+    Student s, {
+    required String school,
+    required String year,
+    required String period,
+    required String teacher,
+    required String date,
+  }) {
     final avg = _average(s);
-    final studentGrades = grades.where((g) => g.studentId == s.id).toList();
-    final doc = pw.Document();
-    doc.addPage(pw.MultiPage(build: (_) => [
-          pw.Center(child: pw.Text('BULLETIN SCOLAIRE', style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold))),
-          pw.SizedBox(height: 16),
-          pw.Text('Élève: ${s.name}'),
-          pw.Text('Niveau: ${s.level}    Groupe: ${s.group}'),
-          pw.SizedBox(height: 12),
-          pw.TableHelper.fromTextArray(
-            headers: ['Évaluation', 'Note', 'Maximum', 'Pourcentage'],
-            data: studentGrades.map((g) {
-              final a = _assessment(g.assessmentId);
-              return [a?.title ?? 'Évaluation', g.score.toStringAsFixed(2), a?.maxScore.toStringAsFixed(2) ?? '-', a == null ? '-' : '${(g.score / a.maxScore * 100).toStringAsFixed(1)}%'];
-            }).toList(),
-          ),
-          pw.SizedBox(height: 16),
-          pw.Text('Moyenne générale: ${avg.toStringAsFixed(2)} / 100'),
-          pw.Text('Lettre: ${_letterGrade(avg)}'),
-          pw.Text('Appréciation: ${_remark(avg)}'),
-          pw.SizedBox(height: 30),
-          pw.Text('Signature: ______________________________'),
-        ]));
-    await Printing.layoutPdf(onLayout: (_) async => doc.save());
+    final rk = _classRank(s);
+    final att = _attendanceCounts(s);
+    final lines = <ReportLine>[];
+    for (final g in _reportGrades(s)) {
+      final a = _assessment(g.assessmentId);
+      if (a == null) continue;
+      lines.add(ReportLine(title: a.title, category: a.category, date: a.date, score: g.score, max: a.maxScore));
+    }
+    return ReportCardData(
+      schoolName: school,
+      schoolYear: year,
+      period: period,
+      teacher: teacher,
+      studentName: s.name,
+      level: s.level,
+      group: s.group,
+      lines: lines,
+      average: avg,
+      letter: _letterGrade(avg),
+      rank: rk.$1,
+      classSize: rk.$2,
+      absences: att.$1,
+      lates: att.$2,
+      excused: att.$3,
+      appreciation: _remark(avg),
+      observation: '',
+      date: date,
+    );
+  }
+
+  Future<void> _printReports(List<ReportCardData> cards, String baseName) async {
+    try {
+      final bytes = await PdfService.buildReportCards(cards);
+      await Printing.layoutPdf(name: FileNameService.safe(baseName), onLayout: (_) async => bytes);
+    } catch (e) {
+      _msg('Impossible de générer le PDF : $e', error: true);
+    }
+  }
+
+  /// Bulletin d'un élève : tous les champs sont modifiables avant l'impression.
+  Future<void> _showReport(Student s) async {
+    final school = TextEditingController(text: schoolInfo['name'] ?? '');
+    final year = TextEditingController(text: schoolInfo['year'] ?? '');
+    final period = TextEditingController(text: 'Bilan général');
+    final teacher = TextEditingController(text: schoolInfo['teacher'] ?? '');
+    final base = _defaultReportData(s, school: '', year: '', period: '', teacher: '', date: _todayIso());
+    final appreciation = TextEditingController(text: base.appreciation);
+    final observation = TextEditingController();
+    final absences = TextEditingController(text: '${base.absences}');
+    final lates = TextEditingController(text: '${base.lates}');
+    final excusedCtrl = TextEditingController(text: '${base.excused}');
+    final relevant = _reportGrades(s);
+    final scoreCtrls = {for (final g in relevant) g.assessmentId: TextEditingController(text: _fmtNum(g.score))};
+    final excluded = <String>{};
+    DateTime date = DateTime.now();
+    String? error;
+
+    double liveAverage() {
+      var total = 0.0;
+      var n = 0;
+      for (final g in relevant) {
+        if (excluded.contains(g.assessmentId)) continue;
+        final a = _assessment(g.assessmentId);
+        final v = _parseNumber(scoreCtrls[g.assessmentId]!.text);
+        if (a == null || v == null) continue;
+        if (a.maxScore > 0) total += v / a.maxScore * 100;
+        n++;
+      }
+      return n == 0 ? 0 : total / n;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final avg = liveAverage();
+          return AlertDialog(
+            title: Text('Bulletin : ${s.name}'),
+            content: DialogBody(
+              maxWidth: 620,
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Text('${s.level} · ${s.group}', style: const TextStyle(color: AppColors.muted)),
+                const SizedBox(height: 14),
+                TextField(controller: school, decoration: const InputDecoration(labelText: 'Établissement (en-tête)')),
+                const SizedBox(height: 12),
+                TextField(controller: year, decoration: const InputDecoration(labelText: 'Année scolaire')),
+                const SizedBox(height: 12),
+                TextField(controller: period, decoration: const InputDecoration(labelText: 'Période (ex. 1er trimestre)')),
+                const SizedBox(height: 12),
+                TextField(controller: teacher, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Titulaire / enseignant(e)')),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.calendar_month, color: AppColors.redSoft),
+                  title: Text('Date du bulletin : ${_fmtDate(_isoFromDate(date))}'),
+                  subtitle: const Text('Appuyez pour modifier', style: TextStyle(color: AppColors.muted)),
+                  onTap: () async {
+                    final picked = await showDatePicker(context: ctx, initialDate: date, firstDate: DateTime(2020), lastDate: DateTime(2100));
+                    if (picked != null) setD(() => date = picked);
+                  },
+                ),
+                const Divider(height: 24),
+                const Text('Notes à afficher', style: TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                const Text(
+                  'Vous pouvez corriger une note ou décocher une évaluation : cela ne modifie que ce bulletin.',
+                  style: TextStyle(color: AppColors.muted, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                if (relevant.isEmpty)
+                  const Text('Aucune note enregistrée pour cet élève.', style: TextStyle(color: AppColors.muted))
+                else
+                  for (final g in relevant)
+                    Builder(builder: (_) {
+                      final a = _assessment(g.assessmentId)!;
+                      final included = !excluded.contains(g.assessmentId);
+                      return Row(children: [
+                        Checkbox(
+                          value: included,
+                          onChanged: (v) => setD(() {
+                            if (v == true) {
+                              excluded.remove(g.assessmentId);
+                            } else {
+                              excluded.add(g.assessmentId);
+                            }
+                          }),
+                        ),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(a.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+                            Text(a.category, style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+                          ]),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 112,
+                          child: TextField(
+                            controller: scoreCtrls[g.assessmentId],
+                            enabled: included,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            onChanged: (_) => setD(() {}),
+                            decoration: InputDecoration(labelText: 'Note', suffixText: '/ ${_fmtNum(a.maxScore)}'),
+                          ),
+                        ),
+                      ]);
+                    }),
+                const SizedBox(height: 12),
+                AppCard(
+                  margin: EdgeInsets.zero,
+                  highlight: true,
+                  child: Text(
+                    'Moyenne : ${avg.toStringAsFixed(2)} / 100 · ${(avg / 5).toStringAsFixed(2)} / 20 · Lettre ${_letterGrade(avg)}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(children: [
+                  Expanded(child: TextField(controller: absences, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Absences'))),
+                  const SizedBox(width: 8),
+                  Expanded(child: TextField(controller: lates, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Retards'))),
+                  const SizedBox(width: 8),
+                  Expanded(child: TextField(controller: excusedCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Excusées'))),
+                ]),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: appreciation,
+                  maxLines: 4,
+                  minLines: 2,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(labelText: 'Appréciation générale'),
+                ),
+                TextButton.icon(
+                  onPressed: () => setD(() => appreciation.text = _remark(avg)),
+                  icon: const Icon(Icons.auto_fix_high),
+                  label: const Text('Proposer selon la moyenne'),
+                ),
+                TextField(
+                  controller: observation,
+                  maxLines: 3,
+                  minLines: 1,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(labelText: 'Observations (facultatif)'),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 10),
+                  FormErrorText(error),
+                ],
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fermer')),
+              FilledButton.icon(
+                onPressed: () async {
+                  if (school.text.trim().isEmpty) {
+                    setD(() => error = 'Indiquez le nom de l’établissement.');
+                    return;
+                  }
+                  final lines = <ReportLine>[];
+                  for (final g in relevant) {
+                    if (excluded.contains(g.assessmentId)) continue;
+                    final a = _assessment(g.assessmentId)!;
+                    final v = _parseNumber(scoreCtrls[g.assessmentId]!.text);
+                    if (v == null || v < 0 || v > a.maxScore) {
+                      setD(() => error = 'Note invalide pour « ${a.title} » : entrez un nombre entre 0 et ${_fmtNum(a.maxScore)}.');
+                      return;
+                    }
+                    lines.add(ReportLine(title: a.title, category: a.category, date: a.date, score: v, max: a.maxScore));
+                  }
+                  var total = 0.0;
+                  for (final l in lines) {
+                    if (l.max > 0) total += l.score / l.max * 100;
+                  }
+                  final finalAvg = lines.isEmpty ? 0.0 : total / lines.length;
+                  final rk = _classRank(s);
+                  setD(() => error = null);
+                  schoolInfo['name'] = school.text.trim();
+                  schoolInfo['year'] = year.text.trim();
+                  schoolInfo['teacher'] = teacher.text.trim();
+                  await _save();
+                  await _printReports([
+                    ReportCardData(
+                      schoolName: school.text.trim(),
+                      schoolYear: year.text.trim(),
+                      period: period.text.trim().isEmpty ? 'Bilan général' : period.text.trim(),
+                      teacher: teacher.text.trim(),
+                      studentName: s.name,
+                      level: s.level,
+                      group: s.group,
+                      lines: lines,
+                      average: finalAvg,
+                      letter: _letterGrade(finalAvg),
+                      rank: rk.$1,
+                      classSize: rk.$2,
+                      absences: int.tryParse(absences.text.trim()) ?? 0,
+                      lates: int.tryParse(lates.text.trim()) ?? 0,
+                      excused: int.tryParse(excusedCtrl.text.trim()) ?? 0,
+                      appreciation: appreciation.text.trim(),
+                      observation: observation.text.trim(),
+                      date: _isoFromDate(date),
+                    ),
+                  ], 'Bulletin_${s.name}');
+                },
+                icon: const Icon(Icons.picture_as_pdf),
+                label: const Text('Aperçu / PDF'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Un seul PDF avec le bulletin de chaque élève d'un niveau et d'un groupe.
+  Future<void> _showClassReports() async {
+    if (students.isEmpty) {
+      _msg('Ajoutez d’abord des élèves.', error: true);
+      return;
+    }
+    final school = TextEditingController(text: schoolInfo['name'] ?? '');
+    final year = TextEditingController(text: schoolInfo['year'] ?? '');
+    final period = TextEditingController(text: 'Bilan général');
+    final teacher = TextEditingController(text: schoolInfo['teacher'] ?? '');
+    String level = levels.first, group = groups.first;
+    DateTime date = DateTime.now();
+    String? error;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final targets = students.where((x) => x.level == level && x.group == group).toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
+          return AlertDialog(
+            title: const Text('Bulletins de la classe'),
+            content: DialogBody(
+              maxWidth: 520,
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                _dropdown('Niveau', level, levels, (v) => setD(() => level = v)),
+                const SizedBox(height: 12),
+                _dropdown('Groupe', group, groups, (v) => setD(() => group = v)),
+                const SizedBox(height: 8),
+                Text('${targets.length} bulletin(s) à générer', style: const TextStyle(color: AppColors.muted)),
+                const SizedBox(height: 12),
+                TextField(controller: school, decoration: const InputDecoration(labelText: 'Établissement (en-tête)')),
+                const SizedBox(height: 12),
+                TextField(controller: year, decoration: const InputDecoration(labelText: 'Année scolaire')),
+                const SizedBox(height: 12),
+                TextField(controller: period, decoration: const InputDecoration(labelText: 'Période (ex. 1er trimestre)')),
+                const SizedBox(height: 12),
+                TextField(controller: teacher, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Titulaire / enseignant(e)')),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.calendar_month, color: AppColors.redSoft),
+                  title: Text('Date des bulletins : ${_fmtDate(_isoFromDate(date))}'),
+                  onTap: () async {
+                    final picked = await showDatePicker(context: ctx, initialDate: date, firstDate: DateTime(2020), lastDate: DateTime(2100));
+                    if (picked != null) setD(() => date = picked);
+                  },
+                ),
+                if (error != null) FormErrorText(error),
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fermer')),
+              FilledButton.icon(
+                onPressed: targets.isEmpty
+                    ? null
+                    : () async {
+                        if (school.text.trim().isEmpty) {
+                          setD(() => error = 'Indiquez le nom de l’établissement.');
+                          return;
+                        }
+                        setD(() => error = null);
+                        schoolInfo['name'] = school.text.trim();
+                        schoolInfo['year'] = year.text.trim();
+                        schoolInfo['teacher'] = teacher.text.trim();
+                        await _save();
+                        final cards = [
+                          for (final st in targets)
+                            _defaultReportData(
+                              st,
+                              school: school.text.trim(),
+                              year: year.text.trim(),
+                              period: period.text.trim().isEmpty ? 'Bilan général' : period.text.trim(),
+                              teacher: teacher.text.trim(),
+                              date: _isoFromDate(date),
+                            ),
+                        ];
+                        await _printReports(cards, 'Bulletins_${level}_$group');
+                      },
+                icon: const Icon(Icons.picture_as_pdf),
+                label: const Text('Aperçu / PDF'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1010,6 +1787,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     DateTime date = DateTime.now().add(const Duration(days: 1));
     TimeOfDay time = const TimeOfDay(hour: 9, minute: 0);
     bool reminder = true;
+    String lead = _leadOptions.keys.first;
     String? titleError;
 
     String fmtTime(TimeOfDay t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
@@ -1061,8 +1839,9 @@ class _SchoolHomeState extends State<SchoolHome> {
                 contentPadding: EdgeInsets.zero,
                 value: reminder,
                 onChanged: (value) => setD(() => reminder = value),
-                title: const Text('Créer un rappel dans l’application'),
+                title: const Text('Créer un rappel avec notification sonore'),
               ),
+              if (reminder) _dropdown('Me rappeler', lead, _leadOptions.keys.toList(), (v) => setD(() => lead = v)),
             ]),
           ),
           actions: [
@@ -1085,15 +1864,170 @@ class _SchoolHomeState extends State<SchoolHome> {
                   'reminder': reminder,
                   'done': false,
                 };
+                final newReminder = <String, dynamic>{
+                  'id': _id(),
+                  'title': 'Rappel : ${item['title']}',
+                  'date': dateText,
+                  'time': timeText,
+                  'done': false,
+                  'lead': _leadOptions[lead] ?? 0,
+                };
                 setState(() {
                   courseSessions.add(item);
-                  if (reminder) {
-                    reminders.add({'id': _id(), 'title': 'Rappel : ${item['title']}', 'date': dateText, 'time': timeText, 'done': false});
-                  }
+                  if (reminder) reminders.add(newReminder);
                 });
                 await _save();
+                if (reminder) {
+                  await NotificationService.requestPermission();
+                  await NotificationService.schedule(newReminder);
+                }
                 if (ctx.mounted) Navigator.pop(ctx);
                 _msg('Cours ajouté au calendrier.');
+              },
+              child: const Text('Enregistrer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- Rappels : notifications, son, alerte dans l'application -----------------
+
+  Future<void> _startReminderEngine() async {
+    try {
+      await NotificationService.syncAll(reminders);
+    } catch (_) {}
+    // Pas de minuteur pendant les tests automatisés.
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return;
+    _reminderTimer?.cancel();
+    _reminderTimer = Timer.periodic(const Duration(seconds: 20), (_) => _checkDueReminders());
+    _checkDueReminders();
+  }
+
+  /// Affiche une alerte (avec bip hors Android) quand un rappel arrive à échéance.
+  Future<void> _checkDueReminders() async {
+    if (!mounted || _alertOpen || loading) return;
+    final now = DateTime.now();
+    for (final r in reminders) {
+      if (r['done'] == true) continue;
+      final id = '${r['id']}';
+      if (_alerted.contains(id)) continue;
+      final due = NotificationService.dueTime(r);
+      if (due == null || now.isBefore(due)) continue;
+      _alerted.add(id);
+      // Rappel trop ancien : on ne le rejoue pas, il reste visible dans la liste.
+      if (now.difference(due) > const Duration(minutes: 10)) continue;
+      _alertOpen = true;
+      if (!NotificationService.supported) {
+        await SystemSound.play(SystemSoundType.alert);
+      }
+      if (!mounted) return;
+      final finished = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(children: [
+            Icon(Icons.notifications_active, color: AppColors.redSoft),
+            SizedBox(width: 10),
+            Expanded(child: Text('Rappel')),
+          ]),
+          content: Text('${r['title'] ?? 'Rappel'}\n${_fmtDate('${r['date'] ?? ''}')} · ${r['time'] ?? ''}'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Terminé')),
+          ],
+        ),
+      );
+      _alertOpen = false;
+      if (finished == true) {
+        setState(() => r['done'] = true);
+        await _save();
+        await NotificationService.cancel(r);
+      }
+      return;
+    }
+  }
+
+  Future<void> _testReminderSound() async {
+    if (NotificationService.supported) {
+      final ok = await NotificationService.requestPermission();
+      if (!ok) {
+        _msg('Autorisez les notifications pour DP dans les paramètres Android.', error: true);
+        return;
+      }
+      await NotificationService.showNow('Rappel DP', 'Test : vous devez entendre un son et sentir une vibration.');
+      _msg('Notification de test envoyée. Si vous n’entendez rien, vérifiez le volume des notifications et le mode Ne pas déranger.');
+    } else {
+      await SystemSound.play(SystemSoundType.alert);
+      _msg('Bip de test joué. Sur Windows, les rappels s’affichent dans DP lorsque l’application est ouverte.');
+    }
+  }
+
+  Future<void> _addReminder() async {
+    final title = TextEditingController();
+    DateTime date = DateTime.now();
+    TimeOfDay time = TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 1)));
+    String lead = _leadOptions.keys.first;
+    String? titleError;
+    String fmtTime(TimeOfDay t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('Nouveau rappel'),
+          content: DialogBody(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                controller: title,
+                autofocus: true,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(labelText: 'Rappel', errorText: titleError),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.calendar_month, color: AppColors.redSoft),
+                title: Text('Date : ${_fmtDate(_isoFromDate(date))}'),
+                onTap: () async {
+                  final picked = await showDatePicker(context: ctx, initialDate: date, firstDate: DateTime(2020), lastDate: DateTime(2100));
+                  if (picked != null) setD(() => date = picked);
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.schedule, color: AppColors.redSoft),
+                title: Text('Heure : ${fmtTime(time)}'),
+                onTap: () async {
+                  final picked = await showTimePicker(context: ctx, initialTime: time);
+                  if (picked != null) setD(() => time = picked);
+                },
+              ),
+              const SizedBox(height: 6),
+              _dropdown('Me rappeler', lead, _leadOptions.keys.toList(), (v) => setD(() => lead = v)),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            FilledButton(
+              onPressed: () async {
+                if (title.text.trim().isEmpty) {
+                  setD(() => titleError = 'Saisissez le texte du rappel.');
+                  return;
+                }
+                final reminder = <String, dynamic>{
+                  'id': _id(),
+                  'title': title.text.trim(),
+                  'date': _isoFromDate(date),
+                  'time': fmtTime(time),
+                  'done': false,
+                  'lead': _leadOptions[lead] ?? 0,
+                };
+                setState(() => reminders.add(reminder));
+                await _save();
+                await NotificationService.requestPermission();
+                await NotificationService.schedule(reminder);
+                if (ctx.mounted) Navigator.pop(ctx);
+                _msg('Rappel enregistré.');
               },
               child: const Text('Enregistrer'),
             ),
@@ -1635,12 +2569,28 @@ class _SchoolHomeState extends State<SchoolHome> {
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text(q.prompt, style: const TextStyle(fontWeight: FontWeight.w700)),
+                      if (q.imageFile.isNotEmpty)
+                        Padding(padding: const EdgeInsets.only(top: 8), child: _questionImage(q.imageFile, height: 110)),
                       const SizedBox(height: 4),
                       Text('${q.category} · ${_fmtNum(q.points)} point(s)', style: const TextStyle(color: AppColors.muted, fontSize: 13)),
-                      if (q.choices.isNotEmpty) Text(q.choices.join(' / '), style: const TextStyle(color: AppColors.muted, fontSize: 13)),
+                      if (q.hasChoices)
+                        for (var i = 0; i < q.choices.length; i++)
+                          Text(
+                            '${_choiceLabel(i)}. ${q.choices[i]}',
+                            style: TextStyle(
+                              color: q.correctIndexes.contains(i) ? AppColors.success : AppColors.muted,
+                              fontWeight: q.correctIndexes.contains(i) ? FontWeight.w700 : FontWeight.normal,
+                              fontSize: 13,
+                            ),
+                          )
+                      else if (q.answer.isNotEmpty)
+                        Text('Réponse : ${q.answer}', style: const TextStyle(color: AppColors.muted, fontSize: 13)),
                     ]),
                   ),
-                  IconButton(tooltip: 'Supprimer la question', icon: const Icon(Icons.delete_outline), onPressed: () => _deleteQuestion(q)),
+                  Column(children: [
+                    IconButton(tooltip: 'Modifier la question', icon: const Icon(Icons.edit_outlined), onPressed: () => _editQuestion(existing: q)),
+                    IconButton(tooltip: 'Supprimer la question', icon: const Icon(Icons.delete_outline), onPressed: () => _deleteQuestion(q)),
+                  ]),
                 ]),
               )),
       ]);
@@ -1648,9 +2598,10 @@ class _SchoolHomeState extends State<SchoolHome> {
   Widget _reportsPage() => PageScroll(children: [
         PageHeader(
           title: 'Rapports et classement',
-          subtitle: 'La moyenne est calculée à partir des évaluations notées disponibles. Le classement est général : appuyez sur un élève pour générer son bulletin PDF.',
+          subtitle: 'La moyenne est calculée à partir des évaluations notées disponibles. Appuyez sur un élève pour préparer, modifier et imprimer son bulletin.',
           actions: [
             FilledButton.icon(onPressed: _exportCsv, icon: const Icon(Icons.table_view), label: const Text('Exporter le palmarès CSV')),
+            FilledButton.icon(onPressed: _showClassReports, icon: const Icon(Icons.library_books_outlined), label: const Text('Bulletins de la classe')),
             OutlinedButton.icon(onPressed: _editRemarks, icon: const Icon(Icons.edit_note), label: const Text('Modifier les appréciations')),
             OutlinedButton.icon(onPressed: _exportBackup, icon: const Icon(Icons.download), label: const Text('Exporter sauvegarde JSON')),
             OutlinedButton.icon(onPressed: _importBackup, icon: const Icon(Icons.file_open_outlined), label: const Text('Importer une sauvegarde')),
@@ -1703,7 +2654,11 @@ class _SchoolHomeState extends State<SchoolHome> {
       PageHeader(
         title: 'Calendrier des cours',
         subtitle: 'Planifiez les séances et gardez le lieu, l’heure et les objectifs au même endroit.',
-        actions: [FilledButton.icon(onPressed: _addCourseSession, icon: const Icon(Icons.add), label: const Text('Ajouter un cours'))],
+        actions: [
+          FilledButton.icon(onPressed: _addCourseSession, icon: const Icon(Icons.add), label: const Text('Ajouter un cours')),
+          OutlinedButton.icon(onPressed: _addReminder, icon: const Icon(Icons.add_alert_outlined), label: const Text('Nouveau rappel')),
+          OutlinedButton.icon(onPressed: _testReminderSound, icon: const Icon(Icons.volume_up_outlined), label: const Text('Tester le son')),
+        ],
       ),
       const SectionTitle('Séances à venir', icon: Icons.event_note),
       if (upcoming.isEmpty)
@@ -1731,6 +2686,12 @@ class _SchoolHomeState extends State<SchoolHome> {
                     onChanged: (value) async {
                       setState(() => r['done'] = value == true);
                       await _save();
+                      if (value == true) {
+                        await NotificationService.cancel(r);
+                      } else {
+                        _alerted.remove('${r['id']}');
+                        await NotificationService.schedule(r);
+                      }
                     },
                     title: Text('${r['title'] ?? 'Rappel'}'),
                     subtitle: Text('${_fmtDate((r['date'] ?? '').toString())}${(r['time'] ?? '').toString().isEmpty ? '' : ' · ${r['time']}'}', style: const TextStyle(color: AppColors.muted)),
@@ -1742,6 +2703,7 @@ class _SchoolHomeState extends State<SchoolHome> {
                   onPressed: () async {
                     final ok = await confirmDialog(context, title: 'Supprimer ce rappel ?', message: '${r['title'] ?? 'Rappel'}', confirmLabel: 'Supprimer', destructive: true);
                     if (ok) {
+                      await NotificationService.cancel(r);
                       setState(() => reminders.removeWhere((x) => x['id'] == r['id']));
                       await _save();
                     }
@@ -1886,6 +2848,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     ]);
   }
 
+  /// Position dans la barre du bas ; -1 pour les pages secondaires (via le menu).
   int _bottomIndex() {
     switch (tab) {
       case 0:
@@ -1897,7 +2860,7 @@ class _SchoolHomeState extends State<SchoolHome> {
       case 4:
         return 3;
       default:
-        return 4;
+        return -1;
     }
   }
 
@@ -1912,11 +2875,8 @@ class _SchoolHomeState extends State<SchoolHome> {
       case 2:
         setState(() => tab = 3);
         break;
-      case 3:
-        setState(() => tab = 4);
-        break;
       default:
-        _scaffoldKey.currentState?.openDrawer();
+        setState(() => tab = 4);
     }
   }
 
@@ -2049,7 +3009,7 @@ class _SchoolHomeState extends State<SchoolHome> {
               onPressed: _showQuickAdd,
               child: const Icon(Icons.add, size: 30),
             ),
-      bottomNavigationBar: wide
+      bottomNavigationBar: (wide || _bottomIndex() < 0)
           ? null
           : NavigationBar(
               selectedIndex: _bottomIndex(),
@@ -2059,7 +3019,6 @@ class _SchoolHomeState extends State<SchoolHome> {
                 NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'Élèves'),
                 NavigationDestination(icon: Icon(Icons.fact_check_outlined), selectedIcon: Icon(Icons.fact_check), label: 'Présences'),
                 NavigationDestination(icon: Icon(Icons.grade_outlined), selectedIcon: Icon(Icons.grade), label: 'Notes'),
-                NavigationDestination(icon: Icon(Icons.menu), label: 'Plus'),
               ],
             ),
     );
