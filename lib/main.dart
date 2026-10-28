@@ -953,6 +953,7 @@ class _SchoolHomeState extends State<SchoolHome> {
     }
     final count = TextEditingController(text: questionBank.length < 10 ? '${questionBank.length}' : '10');
     String category = 'Toutes';
+    final keyword = TextEditingController();
     String? error;
     await showDialog<void>(
       context: context,
@@ -963,6 +964,11 @@ class _SchoolHomeState extends State<SchoolHome> {
             maxWidth: 420,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               _dropdown('Catégorie', category, const ['Toutes', ..._questionCategories], (v) => setD(() => category = v)),
+              const SizedBox(height: 14),
+              TextField(
+                controller: keyword,
+                decoration: const InputDecoration(labelText: 'Mot-clé dans la question (ex. Rythme, Chap. 3)'),
+              ),
               const SizedBox(height: 14),
               TextField(
                 controller: count,
@@ -980,7 +986,11 @@ class _SchoolHomeState extends State<SchoolHome> {
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             FilledButton(
               onPressed: () async {
-                final pool = questionBank.where((q) => category == 'Toutes' || q.category == category).toList()..shuffle();
+                final key = keyword.text.trim().toLowerCase();
+                final pool = questionBank
+                    .where((q) => (category == 'Toutes' || q.category == category) && (key.isEmpty || q.prompt.toLowerCase().contains(key)))
+                    .toList()
+                  ..shuffle();
                 final n = int.tryParse(count.text.trim()) ?? 0;
                 if (n < 1 || n > pool.length) {
                   setD(() => error = 'Nombre invalide. Questions disponibles : ${pool.length}.');
@@ -1892,6 +1902,62 @@ class _SchoolHomeState extends State<SchoolHome> {
     );
   }
 
+  /// Importe un pack de contenu (questions + préparations de cours) sans remplacer les données :
+  /// les éléments déjà présents (même énoncé / même titre) sont ignorés.
+  Future<void> _importPack() async {
+    final picked = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Choisir un pack DP (.json)',
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final raw = picked.files.single.bytes;
+    if (raw == null) {
+      _msg('Impossible de lire ce fichier.', error: true);
+      return;
+    }
+    Map<String, dynamic> data;
+    try {
+      data = Map<String, dynamic>.from(jsonDecode(utf8.decode(raw)) as Map);
+    } catch (_) {
+      _msg('Le fichier JSON est invalide ou endommagé.', error: true);
+      return;
+    }
+    if (data['format'] != 'dp_pack') {
+      _msg('Ce fichier n’est pas un pack DP (format « dp_pack » attendu).', error: true);
+      return;
+    }
+    var addedQuestions = 0, addedPreparations = 0;
+    try {
+      for (final e in ((data['questions'] as List?) ?? [])) {
+        final q = ExamQuestion.fromJson(Map<String, dynamic>.from(e as Map));
+        if (q.prompt.trim().isEmpty) continue;
+        if (questionBank.any((x) => x.prompt == q.prompt && x.category == q.category)) continue;
+        q.imageFile = '';
+        questionBank.add(q);
+        addedQuestions++;
+      }
+      for (final e in ((data['preparations'] as List?) ?? [])) {
+        final prep = Map<String, dynamic>.from(e as Map);
+        final title = '${prep['title'] ?? ''}'.trim();
+        if (title.isEmpty) continue;
+        if (coursePreparations.any((x) => '${x['title']}' == title)) continue;
+        prep['id'] = '${_id()}_$addedPreparations';
+        prep['checks'] = [false, false, false, false];
+        prep['created'] = DateTime.now().toIso8601String();
+        coursePreparations.add(prep);
+        addedPreparations++;
+      }
+    } catch (e) {
+      _msg('Pack invalide : $e', error: true);
+      return;
+    }
+    await _save();
+    if (mounted) setState(() {});
+    _msg('Pack importé : $addedQuestions question(s) et $addedPreparations préparation(s) ajoutée(s).');
+  }
+
   // --- Rappels : notifications, son, alerte dans l'application -----------------
 
   Future<void> _startReminderEngine() async {
@@ -2554,6 +2620,7 @@ class _SchoolHomeState extends State<SchoolHome> {
           actions: [
             FilledButton.icon(onPressed: _addQuestion, icon: const Icon(Icons.add), label: const Text('Ajouter une question')),
             OutlinedButton.icon(onPressed: _generateExam, icon: const Icon(Icons.auto_awesome), label: const Text('Générer un examen')),
+            OutlinedButton.icon(onPressed: _importPack, icon: const Icon(Icons.upload_file), label: const Text('Importer un pack')),
           ],
         ),
         if (questionBank.isEmpty)
@@ -2726,7 +2793,10 @@ class _SchoolHomeState extends State<SchoolHome> {
         PageHeader(
           title: 'Préparation des cours',
           subtitle: 'Préparez les objectifs, le matériel et les étapes avant la séance.',
-          actions: [FilledButton.icon(onPressed: _addPreparation, icon: const Icon(Icons.add), label: const Text('Préparer un cours'))],
+          actions: [
+            FilledButton.icon(onPressed: _addPreparation, icon: const Icon(Icons.add), label: const Text('Préparer un cours')),
+            OutlinedButton.icon(onPressed: _importPack, icon: const Icon(Icons.upload_file), label: const Text('Importer un pack')),
+          ],
         ),
         if (coursePreparations.isEmpty)
           EmptyState(
