@@ -1256,14 +1256,26 @@ class _SchoolHomeState extends State<SchoolHome> {
       'reminders': reminders,
     };
     final bytes = utf8.encode(const JsonEncoder.withIndent('  ').convert(data));
+    final isMobile = Platform.isAndroid || Platform.isIOS;
     final result = await FilePicker.platform.saveFile(
       dialogTitle: 'Exporter une sauvegarde DP Scolaire',
       fileName: 'DP_Scolaire_Backup_${_todayIso()}.json',
       type: FileType.custom,
       allowedExtensions: ['json'],
-      bytes: bytes,
+      bytes: isMobile ? Uint8List.fromList(bytes) : null,
     );
     if (result == null) return;
+    if (!isMobile) {
+      // Sur Windows, le sélecteur renvoie seulement le chemin choisi : il faut écrire le fichier soi-même.
+      final path = result.toLowerCase().endsWith('.json') ? result : '$result.json';
+      try {
+        await File(path).writeAsBytes(bytes, flush: true);
+        _msg('Sauvegarde enregistrée : $path');
+      } catch (e) {
+        _msg('Impossible d’enregistrer la sauvegarde : $e', error: true);
+      }
+      return;
+    }
     try {
       // Le partage utilise le fichier sauvegardé afin que l’utilisateur choisisse
       // Bluetooth, Quick Share, e-mail, USB ou une autre application compatible.
@@ -2058,7 +2070,11 @@ class _SchoolHomeState extends State<SchoolHome> {
     }
     await NotificationService.requestPermission();
     final sent = await NotificationService.showNow('Rappel DP', 'Test : cette alarme doit sonner et vibrer.');
+    final scheduled = await NotificationService.scheduleTest(minutes: 1);
     final lines = await NotificationService.diagnose();
+    lines.insert(0, scheduled
+        ? 'Alarme programmée : elle doit sonner dans 1 minute (gardez DP fermé pour tester).'
+        : 'Alarme programmée : ÉCHEC (c’est ce qui empêche les rappels de sonner).');
     if (!mounted) return;
     await showDialog<void>(
       context: context,
