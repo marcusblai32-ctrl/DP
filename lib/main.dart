@@ -1990,6 +1990,14 @@ class _SchoolHomeState extends State<SchoolHome> {
 
   Future<void> _startReminderEngine() async {
     try {
+      // Premier lancement sur Android : demander l'autorisation d'afficher les notifications.
+      if (NotificationService.supported) {
+        final prefs = await SharedPreferences.getInstance();
+        if (prefs.getBool('notifPermissionAsked') != true) {
+          await prefs.setBool('notifPermissionAsked', true);
+          await NotificationService.requestNotificationPermission();
+        }
+      }
       await NotificationService.syncAll(reminders);
     } catch (_) {}
     // Pas de minuteur pendant les tests automatisés.
@@ -2062,8 +2070,9 @@ class _SchoolHomeState extends State<SchoolHome> {
             const SizedBox(height: 8),
             const Text(
               'Si vous n’entendez rien : vérifiez le volume des alarmes, le mode Ne pas déranger, '
-              'les autorisations « Notifications » et « Alarmes et rappels » de DP, et retirez DP '
-              'de l’économie de batterie.',
+              'et retirez DP de l’économie de batterie. Pour autoriser les notifications : '
+              'Paramètres Android → Applications → DP → Notifications → Autoriser, puis '
+              'Autorisations spéciales → « Alarmes et rappels ».',
               style: TextStyle(color: AppColors.muted),
             ),
           ]),
