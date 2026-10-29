@@ -220,6 +220,37 @@ class NotificationService {
     }
   }
 
+  /// Programme une alarme de test dans [minutes] minute(s) : vérifie la planification
+  /// (c'est elle qui sert aux rappels), pas seulement l'affichage immédiat.
+  static Future<bool> scheduleTest({int minutes = 1}) async {
+    if (!supported) return false;
+    await init();
+    if (!_ready) return false;
+    final when = tz.TZDateTime.from(DateTime.now().add(Duration(minutes: minutes)), tz.UTC);
+    Future<void> go(AndroidScheduleMode mode) => _plugin.zonedSchedule(
+          999001,
+          'Rappel DP',
+          'Test programmé : cette alarme doit sonner à l\'heure prévue.',
+          when,
+          _details(),
+          androidScheduleMode: mode,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        );
+    try {
+      await go(AndroidScheduleMode.exactAllowWhileIdle);
+      return true;
+    } catch (e) {
+      lastError = 'Alarme exacte refusée ($e), repli sur une alarme approximative.';
+      try {
+        await go(AndroidScheduleMode.inexactAllowWhileIdle);
+        return true;
+      } catch (e2) {
+        lastError = 'Planification impossible : $e2';
+        return false;
+      }
+    }
+  }
+
   /// État des autorisations et des rappels planifiés, pour comprendre un silence.
   static Future<List<String>> diagnose() async {
     final lines = <String>[];
