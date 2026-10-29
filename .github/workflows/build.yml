@@ -74,7 +74,20 @@ jobs:
           add = ''.join('    <uses-permission android:name="%s"/>\n' % p for p in perms if p not in text)
           if add:
               text = text.replace('<application', add + '    <application', 1)
-              manifest.write_text(text, encoding='utf-8')
+          if 'ScheduledNotificationReceiver' not in text:
+              receivers = (
+                  '        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />\n'
+                  '        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">\n'
+                  '            <intent-filter>\n'
+                  '                <action android:name="android.intent.action.BOOT_COMPLETED"/>\n'
+                  '                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>\n'
+                  '                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>\n'
+                  '                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>\n'
+                  '            </intent-filter>\n'
+                  '        </receiver>\n'
+              )
+              text = text.replace('</application>', receivers + '    </application>', 1)
+          manifest.write_text(text, encoding='utf-8')
           for name in ('android/app/build.gradle.kts', 'android/app/build.gradle'):
               f = Path(name)
               if not f.exists():
@@ -130,7 +143,8 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build release APK
-        run: flutter build apk --release
+        # --no-shrink : R8 supprime des classes dont le plugin de notifications a besoin pour planifier les rappels.
+        run: flutter build apk --release --no-shrink
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
