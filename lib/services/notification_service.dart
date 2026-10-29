@@ -109,6 +109,20 @@ class NotificationService {
     }
   }
 
+  /// Demande seulement l'autorisation d'afficher des notifications (Android 13+).
+  /// Utilisée au premier lancement : n'ouvre aucun écran de réglages.
+  static Future<bool> requestNotificationPermission() async {
+    if (!supported) return false;
+    await init();
+    if (!_ready) return false;
+    try {
+      return (await _android?.requestNotificationsPermission()) ?? true;
+    } catch (e) {
+      lastError = 'Autorisation impossible : $e';
+      return false;
+    }
+  }
+
   /// Demande les autorisations nécessaires : notifications (Android 13+) puis alarmes exactes.
   static Future<bool> requestPermission() async {
     if (!supported) return false;
