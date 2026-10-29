@@ -2043,18 +2043,34 @@ class _SchoolHomeState extends State<SchoolHome> {
   }
 
   Future<void> _testReminderSound() async {
-    if (NotificationService.supported) {
-      final ok = await NotificationService.requestPermission();
-      if (!ok) {
-        _msg('Autorisez les notifications pour DP dans les paramètres Android.', error: true);
-        return;
-      }
-      await NotificationService.showNow('Rappel DP', 'Test : vous devez entendre un son et sentir une vibration.');
-      _msg('Notification de test envoyée. Si vous n’entendez rien, vérifiez le volume des notifications et le mode Ne pas déranger.');
-    } else {
+    if (!NotificationService.supported) {
       await SystemSound.play(SystemSoundType.alert);
       _msg('Bip de test joué. Sur Windows, les rappels s’affichent dans DP lorsque l’application est ouverte.');
+      return;
     }
+    await NotificationService.requestPermission();
+    final sent = await NotificationService.showNow('Rappel DP', 'Test : cette alarme doit sonner et vibrer.');
+    final lines = await NotificationService.diagnose();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(sent ? 'Alarme de test envoyée' : 'Alarme de test impossible'),
+        content: DialogBody(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            for (final l in lines) Padding(padding: const EdgeInsets.only(bottom: 6), child: Text(l)),
+            const SizedBox(height: 8),
+            const Text(
+              'Si vous n’entendez rien : vérifiez le volume des alarmes, le mode Ne pas déranger, '
+              'les autorisations « Notifications » et « Alarmes et rappels » de DP, et retirez DP '
+              'de l’économie de batterie.',
+              style: TextStyle(color: AppColors.muted),
+            ),
+          ]),
+        ),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+      ),
+    );
   }
 
   Future<void> _addReminder() async {
