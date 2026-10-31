@@ -5,7 +5,6 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +15,7 @@ import 'models/attendance_record.dart';
 import 'models/exam_question.dart';
 import 'models/grade_record.dart';
 import 'models/student.dart';
+import 'services/alarm_sound_service.dart';
 import 'services/file_name_service.dart';
 import 'services/grade_service.dart';
 import 'services/notification_service.dart';
@@ -138,6 +138,7 @@ class _SchoolHomeState extends State<SchoolHome> {
   @override
   void dispose() {
     _reminderTimer?.cancel();
+    AlarmSoundService.stop();
     _studentSearch.dispose();
     super.dispose();
   }
@@ -2015,11 +2016,13 @@ class _SchoolHomeState extends State<SchoolHome> {
     // Pas de minuteur pendant les tests automatisés.
     if (Platform.environment.containsKey('FLUTTER_TEST')) return;
     _reminderTimer?.cancel();
-    _reminderTimer = Timer.periodic(const Duration(seconds: 20), (_) => _checkDueReminders());
+    // Vérification chaque seconde : la sonnerie démarre à l'heure exacte du rappel.
+    _reminderTimer = Timer.periodic(const Duration(seconds: 1), (_) => _checkDueReminders());
     _checkDueReminders();
   }
 
-  /// Affiche une alerte (avec bip hors Android) quand un rappel arrive à échéance.
+  /// Quand un rappel arrive à échéance, DP sonne lui-même comme une alarme (en boucle)
+  /// et affiche une fenêtre : « Terminé » ou « Reporter 5 min ».
   Future<void> _checkDueReminders() async {
     if (!mounted || _alertOpen || loading) return;
     final now = DateTime.now();
@@ -2033,27 +2036,48 @@ class _SchoolHomeState extends State<SchoolHome> {
       // Rappel trop ancien : on ne le rejoue pas, il reste visible dans la liste.
       if (now.difference(due) > const Duration(minutes: 10)) continue;
       _alertOpen = true;
-      if (!NotificationService.supported) {
-        await SystemSound.play(SystemSoundType.alert);
+      // C'est DP qui sonne : on retire la notification pour éviter une double sonnerie.
+      await NotificationService.cancel(r);
+      await AlarmSoundService.start();
+      final autoStop = Timer(const Duration(minutes: 2), AlarmSoundService.stop);
+      if (!mounted) {
+        autoStop.cancel();
+        await AlarmSoundService.stop();
+        _alertOpen = false;
+        return;
       }
-      if (!mounted) return;
-      final finished = await showDialog<bool>(
+      final choice = await showDialog<String>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Row(children: [
-            Icon(Icons.notifications_active, color: AppColors.redSoft),
-            SizedBox(width: 10),
-            Expanded(child: Text('Rappel')),
-          ]),
-          content: Text('${r['title'] ?? 'Rappel'}\n${_fmtDate('${r['date'] ?? ''}')} · ${r['time'] ?? ''}'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Terminé')),
-          ],
+        barrierDismissible: false,
+        builder: (ctx) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Row(children: [
+              Icon(Icons.alarm, color: AppColors.redSoft),
+              SizedBox(width: 10),
+              Expanded(child: Text('Rappel')),
+            ]),
+            content: Text('${r['title'] ?? 'Rappel'}\n${_fmtDate('${r['date'] ?? ''}')} · ${r['time'] ?? ''}'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, 'snooze'), child: const Text('Reporter 5 min')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, 'done'), child: const Text('Terminé')),
+            ],
+          ),
         ),
       );
+      autoStop.cancel();
+      await AlarmSoundService.stop();
       _alertOpen = false;
-      if (finished == true) {
+      if (choice == 'snooze') {
+        final next = DateTime.now().add(const Duration(minutes: 5));
+        r['date'] = _isoFromDate(next);
+        r['time'] = '${next.hour.toString().padLeft(2, '0')}:${next.minute.toString().padLeft(2, '0')}';
+        r['lead'] = 0;
+        _alerted.remove(id);
+        setState(() {});
+        await _save();
+        await NotificationService.schedule(r);
+      } else {
         setState(() => r['done'] = true);
         await _save();
         await NotificationService.cancel(r);
@@ -2063,39 +2087,60 @@ class _SchoolHomeState extends State<SchoolHome> {
   }
 
   Future<void> _testReminderSound() async {
-    if (!NotificationService.supported) {
-      await SystemSound.play(SystemSoundType.alert);
-      _msg('Bip de test joué. Sur Windows, les rappels s’affichent dans DP lorsque l’application est ouverte.');
+    final android = NotificationService.supported;
+    var lines = <String>[];
+    var sent = false;
+    if (android) {
+      await NotificationService.requestPermission();
+      sent = await NotificationService.showNow('Rappel DP', 'Test : cette notification doit sonner et vibrer.');
+      final scheduled = await NotificationService.scheduleTest(minutes: 1);
+      lines = await NotificationService.diagnose();
+      lines.insert(0, scheduled
+          ? 'Notification programmée : elle doit sonner dans 1 minute si DP est fermé.'
+          : 'Notification programmée : ÉCHEC (voir la dernière erreur).');
+    }
+    // Sonnerie de l'application : c'est celle qui retentit à l'heure d'un rappel quand DP est ouvert.
+    await AlarmSoundService.start();
+    if (!mounted) {
+      await AlarmSoundService.stop();
       return;
     }
-    await NotificationService.requestPermission();
-    final sent = await NotificationService.showNow('Rappel DP', 'Test : cette alarme doit sonner et vibrer.');
-    final scheduled = await NotificationService.scheduleTest(minutes: 1);
-    final lines = await NotificationService.diagnose();
-    lines.insert(0, scheduled
-        ? 'Alarme programmée : elle doit sonner dans 1 minute (gardez DP fermé pour tester).'
-        : 'Alarme programmée : ÉCHEC (c’est ce qui empêche les rappels de sonner).');
-    if (!mounted) return;
     await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(sent ? 'Alarme de test envoyée' : 'Alarme de test impossible'),
-        content: DialogBody(
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            for (final l in lines) Padding(padding: const EdgeInsets.only(bottom: 6), child: Text(l)),
-            const SizedBox(height: 8),
-            const Text(
-              'Si vous n’entendez rien : vérifiez le volume des alarmes, le mode Ne pas déranger, '
-              'et retirez DP de l’économie de batterie. Pour autoriser les notifications : '
-              'Paramètres Android → Applications → DP → Notifications → Autoriser, puis '
-              'Autorisations spéciales → « Alarmes et rappels ».',
-              style: TextStyle(color: AppColors.muted),
-            ),
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: const Row(children: [
+            Icon(Icons.alarm, color: AppColors.redSoft),
+            SizedBox(width: 10),
+            Expanded(child: Text('Sonnerie de test')),
           ]),
+          content: DialogBody(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(
+                AlarmSoundService.playing
+                    ? 'La sonnerie de DP est en cours. Vous devez l’entendre maintenant.'
+                    : 'La sonnerie de DP n’a pas pu démarrer sur cet appareil.',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              if (android) Text(sent ? 'Notification immédiate : envoyée.' : 'Notification immédiate : ÉCHEC.'),
+              for (final l in lines) Padding(padding: const EdgeInsets.only(top: 6), child: Text(l)),
+              const SizedBox(height: 10),
+              const Text(
+                'Si vous n’entendez rien : montez le volume des alarmes, vérifiez le mode Ne pas déranger '
+                'et, sur Android, autorisez les notifications (Paramètres → Applications → DP → Notifications) '
+                'et « Alarmes et rappels ».',
+                style: TextStyle(color: AppColors.muted),
+              ),
+            ]),
+          ),
+          actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Arrêter'))],
         ),
-        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
       ),
     );
+    await AlarmSoundService.stop();
   }
 
   Future<void> _addReminder() async {
@@ -2159,9 +2204,9 @@ class _SchoolHomeState extends State<SchoolHome> {
                 };
                 setState(() => reminders.add(reminder));
                 await _save();
+                if (ctx.mounted) Navigator.pop(ctx);
                 await NotificationService.requestPermission();
                 await NotificationService.schedule(reminder);
-                if (ctx.mounted) Navigator.pop(ctx);
                 _msg('Rappel enregistré.');
               },
               child: const Text('Enregistrer'),
