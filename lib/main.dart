@@ -2129,14 +2129,19 @@ class _SchoolHomeState extends State<SchoolHome> {
               for (final l in lines) Padding(padding: const EdgeInsets.only(top: 6), child: Text(l)),
               const SizedBox(height: 10),
               const Text(
-                'Si vous n’entendez rien : montez le volume des alarmes, vérifiez le mode Ne pas déranger '
-                'et, sur Android, autorisez les notifications (Paramètres → Applications → DP → Notifications) '
-                'et « Alarmes et rappels ».',
+                'Pour que DP sonne quand il est fermé : autorisez les notifications, mettez la batterie de DP sur '
+                '« Ne pas optimiser » / « Sans restriction », et activez « Démarrage automatique » '
+                'si votre téléphone le propose (Tecno, Infinix, Xiaomi, Huawei). '
+                'Ne fermez pas DP avec « Forcer l’arrêt ».',
                 style: TextStyle(color: AppColors.muted),
               ),
             ]),
           ),
-          actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Arrêter'))],
+          actions: [
+            if (android) TextButton(onPressed: NotificationService.openAppSettings, child: const Text('Réglages de DP')),
+            if (android) TextButton(onPressed: NotificationService.openBatterySettings, child: const Text('Batterie')),
+            FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Arrêter')),
+          ],
         ),
       ),
     );
