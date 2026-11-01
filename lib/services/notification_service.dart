@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -145,6 +147,54 @@ class NotificationService {
     }
   }
 
+  /// Planifie avec le mode le plus fiable d'abord : « alarmClock » (comme une vraie alarme du
+  /// téléphone : ne dépend pas de l'autorisation d'alarmes exactes), puis exact, puis approximatif.
+  static Future<bool> _run(Future<void> Function(AndroidScheduleMode mode) go) async {
+    const modes = <AndroidScheduleMode>[
+      AndroidScheduleMode.alarmClock,
+      AndroidScheduleMode.exactAllowWhileIdle,
+      AndroidScheduleMode.inexactAllowWhileIdle,
+    ];
+    Object? firstError;
+    for (final mode in modes) {
+      try {
+        await go(mode);
+        if (mode != modes.first) {
+          lastError = 'Mode « alarme » indisponible ($firstError) : mode ${mode.name} utilisé.';
+        }
+        return true;
+      } catch (e) {
+        firstError ??= e;
+      }
+    }
+    lastError = 'Planification impossible : $firstError';
+    return false;
+  }
+
+  /// Ouvre les réglages Android de DP (notifications, autorisations).
+  static Future<void> openAppSettings() async {
+    if (!supported) return;
+    try {
+      final info = await PackageInfo.fromPlatform();
+      await AndroidIntent(
+        action: 'android.settings.APPLICATION_DETAILS_SETTINGS',
+        data: 'package:${info.packageName}',
+      ).launch();
+    } catch (e) {
+      lastError = 'Réglages impossibles à ouvrir : $e';
+    }
+  }
+
+  /// Ouvre la liste « Optimisation de la batterie » pour mettre DP sur « Ne pas optimiser ».
+  static Future<void> openBatterySettings() async {
+    if (!supported) return;
+    try {
+      await AndroidIntent(action: 'android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS').launch();
+    } catch (e) {
+      lastError = 'Réglages batterie impossibles à ouvrir : $e';
+    }
+  }
+
   static Future<void> schedule(Map<String, dynamic> reminder) async {
     if (!supported) return;
     await init();
@@ -165,16 +215,7 @@ class NotificationService {
           uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
         );
 
-    try {
-      await go(AndroidScheduleMode.exactAllowWhileIdle);
-    } catch (e) {
-      lastError = 'Alarme exacte refusée ($e), repli sur une alarme approximative.';
-      try {
-        await go(AndroidScheduleMode.inexactAllowWhileIdle);
-      } catch (e2) {
-        lastError = 'Planification impossible : $e2';
-      }
-    }
+    await _run(go);
   }
 
   static Future<void> cancel(Map<String, dynamic> reminder) async {
@@ -236,19 +277,7 @@ class NotificationService {
           androidScheduleMode: mode,
           uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
         );
-    try {
-      await go(AndroidScheduleMode.exactAllowWhileIdle);
-      return true;
-    } catch (e) {
-      lastError = 'Alarme exacte refusée ($e), repli sur une alarme approximative.';
-      try {
-        await go(AndroidScheduleMode.inexactAllowWhileIdle);
-        return true;
-      } catch (e2) {
-        lastError = 'Planification impossible : $e2';
-        return false;
-      }
-    }
+    return _run(go);
   }
 
   /// État des autorisations et des rappels planifiés, pour comprendre un silence.
