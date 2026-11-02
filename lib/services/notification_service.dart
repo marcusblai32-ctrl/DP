@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show Color;
 
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -57,9 +58,13 @@ class NotificationService {
 
   static final Int64List _vibration = Int64List.fromList(<int>[0, 900, 400, 900, 400, 900]);
 
+  static bool _useLogo = true;
+  static String _activeChannel = channelId;
+  static const String basicChannelId = 'dp_reminders_basic_v1';
+
   static NotificationDetails _details() => NotificationDetails(
         android: AndroidNotificationDetails(
-          channelId,
+          _activeChannel,
           channelName,
           channelDescription: channelDescription,
           importance: Importance.max,
@@ -77,23 +82,51 @@ class NotificationService {
           // Arrêt automatique au bout d'une minute si personne ne répond.
           timeoutAfter: 60000,
           autoCancel: true,
+          // Logo de DP dans le rideau des notifications (comme les autres applications).
+          color: const Color(0xFFE51C35),
+          largeIcon: _useLogo ? const DrawableResourceAndroidBitmap('dp_logo') : null,
+          ticker: 'Rappel DP',
         ),
       );
 
   static AndroidFlutterLocalNotificationsPlugin? get _android =>
       _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
 
+  /// Le service est initialisé et prêt à afficher des notifications.
+  static bool get isReady => _ready;
+
   static Future<void> init() async {
     if (!supported || _ready) return;
     try {
       tzdata.initializeTimeZones();
-      const settings = InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher'));
-      await _plugin.initialize(settings);
-      final android = _android;
-      try {
-        await android?.deleteNotificationChannel(oldChannelId);
-      } catch (_) {}
-      await android?.createNotificationChannel(AndroidNotificationChannel(
+      var initialized = false;
+      // Petite icône blanche (créée par le workflow) ; à défaut, l'icône de l'application.
+      for (final icon in const ['@drawable/ic_stat_dp', '@mipmap/ic_launcher']) {
+        try {
+          await _plugin.initialize(InitializationSettings(android: AndroidInitializationSettings(icon)));
+          initialized = true;
+          break;
+        } catch (e) {
+          lastError = 'Icône $icon : $e';
+        }
+      }
+      if (!initialized) return;
+      _ready = true;
+      await _createChannel();
+    } catch (e) {
+      _ready = false;
+      lastError = 'Initialisation impossible : $e';
+    }
+  }
+
+  static Future<void> _createChannel() async {
+    final android = _android;
+    if (android == null) return;
+    try {
+      await android.deleteNotificationChannel(oldChannelId);
+    } catch (_) {}
+    try {
+      await android.createNotificationChannel(AndroidNotificationChannel(
         channelId,
         channelName,
         description: channelDescription,
@@ -104,10 +137,32 @@ class NotificationService {
         enableVibration: true,
         vibrationPattern: _vibration,
       ));
-      _ready = true;
+      _activeChannel = channelId;
     } catch (e) {
-      _ready = false;
-      lastError = 'Initialisation impossible : $e';
+      lastError = 'Canal « alarme » impossible ($e) : canal simple utilisé.';
+      try {
+        await android.createNotificationChannel(const AndroidNotificationChannel(
+          basicChannelId,
+          channelName,
+          description: channelDescription,
+          importance: Importance.max,
+        ));
+        _activeChannel = basicChannelId;
+      } catch (e2) {
+        lastError = 'Canal de notifications impossible : $e2';
+      }
+    }
+  }
+
+  /// Les notifications de DP sont-elles autorisées dans Android ?
+  static Future<bool> areEnabled() async {
+    if (!supported) return false;
+    await init();
+    if (!_ready) return false;
+    try {
+      return (await _android?.areNotificationsEnabled()) ?? true;
+    } catch (_) {
+      return true;
     }
   }
 
@@ -166,6 +221,10 @@ class NotificationService {
       } catch (e) {
         firstError ??= e;
       }
+    }
+    if (_useLogo && '$firstError'.contains('icon')) {
+      _useLogo = false; // ressource du logo introuvable : on réessaie sans logo
+      return _run(go);
     }
     lastError = 'Planification impossible : $firstError';
     return false;
@@ -256,6 +315,16 @@ class NotificationService {
       await _plugin.show(0, title, body, _details());
       return true;
     } catch (e) {
+      if (_useLogo && '$e'.contains('icon')) {
+        _useLogo = false;
+        try {
+          await _plugin.show(0, title, body, _details());
+          return true;
+        } catch (e2) {
+          lastError = 'Notification impossible : $e2';
+          return false;
+        }
+      }
       lastError = 'Notification impossible : $e';
       return false;
     }
