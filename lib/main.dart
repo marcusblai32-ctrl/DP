@@ -103,6 +103,7 @@ class _SchoolHomeState extends State<SchoolHome> {
   Timer? _reminderTimer;
   final Set<String> _alerted = {};
   bool _alertOpen = false;
+  bool _notifDialogShown = false;
   final Map<String, String> schoolInfo = {
     'name': 'Dimension Production',
     'year': _defaultSchoolYear(),
@@ -2003,12 +2004,18 @@ class _SchoolHomeState extends State<SchoolHome> {
 
   Future<void> _startReminderEngine() async {
     try {
-      // Premier lancement sur Android : demander l'autorisation d'afficher les notifications.
+      // Android : sans l'autorisation « Notifications », rien n'apparaît quand DP est fermé.
+      // On la demande à chaque lancement tant qu'elle n'est pas accordée, puis on guide vers les réglages.
       if (NotificationService.supported) {
-        final prefs = await SharedPreferences.getInstance();
-        if (prefs.getBool('notifPermissionAsked') != true) {
-          await prefs.setBool('notifPermissionAsked', true);
+        await NotificationService.init();
+        var enabled = await NotificationService.areEnabled();
+        if (!enabled && NotificationService.isReady) {
           await NotificationService.requestNotificationPermission();
+          enabled = await NotificationService.areEnabled();
+        }
+        if (!enabled && NotificationService.isReady && mounted && !_notifDialogShown) {
+          _notifDialogShown = true;
+          _askNotificationSettings();
         }
       }
       await NotificationService.syncAll(reminders);
@@ -2019,6 +2026,29 @@ class _SchoolHomeState extends State<SchoolHome> {
     // Vérification chaque seconde : la sonnerie démarre à l'heure exacte du rappel.
     _reminderTimer = Timer.periodic(const Duration(seconds: 1), (_) => _checkDueReminders());
     _checkDueReminders();
+  }
+
+  Future<void> _askNotificationSettings() async {
+    if (!mounted) return;
+    final open = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(children: [
+          Icon(Icons.notifications_off_outlined, color: AppColors.redSoft),
+          SizedBox(width: 10),
+          Expanded(child: Text('Autoriser les notifications')),
+        ]),
+        content: const Text(
+          'Sans cette autorisation, les rappels ne peuvent pas apparaître en haut de l’écran ni sonner '
+          'quand DP est fermé. Ouvrez les réglages de DP, puis activez « Notifications ».',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Ouvrir les réglages')),
+        ],
+      ),
+    );
+    if (open == true) await NotificationService.openAppSettings();
   }
 
   /// Quand un rappel arrive à échéance, DP sonne lui-même comme une alarme (en boucle)
